@@ -30,11 +30,15 @@ jobs:
 
     - name: Build EXE with PyInstaller
       run: |
-        pyinstaller -y --noconsole --onefile --hidden-import keyboard --hidden-import sounddevice --hidden-import soundfile --hidden-import pyperclip --hidden-import dotenv --hidden-import google.generativeai main.py
+        pyinstaller -y WhisperLive.spec
         
     - name: Rename Executable
       run: |
-        Rename-Item -Path "dist\main.exe" -NewName "WhisperLive.exe"
+        if (Test-Path "dist\WhisperLive.exe") {
+          Write-Host "WhisperLive.exe already named correctly"
+        } elseif (Test-Path "dist\main.exe") {
+          Rename-Item -Path "dist\main.exe" -NewName "WhisperLive.exe"
+        }
 
     - name: Upload Artifact (For Manual Triggers)
       if: github.event_name == 'workflow_dispatch'

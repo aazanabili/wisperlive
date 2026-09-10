@@ -11,7 +11,8 @@ venv.bak/
 # Build files
 build/
 dist/
-*.spec
+# Only ignore auto-generated main.spec, not our custom spec
+main.spec
 
 # Python caches
 __pycache__/
