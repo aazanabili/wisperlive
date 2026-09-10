@@ -1,0 +1,23 @@
+# Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables
+.env
+
+# Build files
+build/
+dist/
+*.spec
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Local app data
+config.json
+temp_audio.wav
+*.log
