@@ -27,7 +27,7 @@ jobs:
 
     - name: Build EXE with PyInstaller
       run: |
-        pyinstaller --noconsole --onefile main.py
+        pyinstaller -y --noconsole --onefile main.py
         
     - name: Rename Executable
       run: |
