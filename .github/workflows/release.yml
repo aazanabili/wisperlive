@@ -30,7 +30,7 @@ jobs:
 
     - name: Build EXE with PyInstaller
       run: |
-        pyinstaller -y --noconsole --onefile main.py
+        pyinstaller -y --noconsole --onefile --hidden-import keyboard --hidden-import sounddevice --hidden-import soundfile --hidden-import pyperclip --hidden-import dotenv --hidden-import google.generativeai main.py
         
     - name: Rename Executable
       run: |
