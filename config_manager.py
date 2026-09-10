@@ -4,9 +4,10 @@ import os
 CONFIG_FILE = 'config.json'
 
 DEFAULT_CONFIG = {
+    "api_key": "",
     "target_language": "English",
     "shortcut": "ctrl+space",
-    "mode": "toggle" # can be 'toggle' or 'hold'
+    "mode": "toggle"  # can be 'toggle' or 'hold'
 }
 
 def load_config():
@@ -16,7 +17,6 @@ def load_config():
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             config = json.load(f)
-            # Ensure all keys exist
             for key, value in DEFAULT_CONFIG.items():
                 if key not in config:
                     config[key] = value

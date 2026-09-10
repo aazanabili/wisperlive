@@ -1,24 +1,22 @@
-# Environments
+# Virtual environments
 venv/
 env/
 ENV/
-env.bak/
-venv.bak/
 
-# Environment Variables
+# Environment Variables (no longer used - API key is in config.json)
 .env
 
 # Build files
 build/
 dist/
-# Only ignore auto-generated main.spec, not our custom spec
 main.spec
 
 # Python caches
 __pycache__/
 *.pyc
 
-# Local app data
+# Local app data (user-specific, not for repo)
 config.json
 temp_audio.wav
+test_audio.wav
 *.log
