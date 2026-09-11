@@ -282,11 +282,12 @@ class WhisperLiveApp:
         panel.pack(fill=tk.BOTH, expand=True)
         tk.Label(panel, text="WhisperLive", bg=COLORS["surface"], fg=COLORS["text"], font=("Segoe UI Semibold", 16)).pack(anchor=tk.W)
         tk.Label(
-            panel, text="Abdullatif  Zanabili, Engineer Abdullatif  Zanabili.", bg=COLORS["surface"], fg=COLORS["muted"],
+            panel, text="Informatics Engineer Abdullatif Zanabili", bg=COLORS["surface"], fg=COLORS["muted"],
             font=("Segoe UI", 10), wraplength=300, justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(8, 16))
         self.create_link(panel, "Personal website", "https://zanabili.dev/").pack(anchor=tk.W, pady=2)
         self.create_link(panel, "Support WhisperLive", "https://paypal.me/Zanabili").pack(anchor=tk.W, pady=2)
+        self.create_link(panel, "Project on GitHub", "https://github.com/aazanabili/wisperlive").pack(anchor=tk.W, pady=2)
         self.create_link(panel, "info@zanabili.dev", "mailto:info@zanabili.dev").pack(anchor=tk.W, pady=2)
         self.create_button(panel, "Close", about.destroy, secondary=True).pack(anchor=tk.E, pady=(18, 0))
 
