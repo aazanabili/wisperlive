@@ -567,7 +567,8 @@ class WhisperLiveApp:
         self.indicator_panel.configure(bg=COLORS["indicator"])
         self.indicator_labels.configure(bg=COLORS["indicator"])
         self.indicator_canvas.configure(bg=COLORS["indicator"])
-        self.indicator_title.configure(bg=COLORS["indicator"], fg=COLORS["indicator_text"])
+        title_color = COLORS["warning"] if self.indicator_state == "processing" else COLORS["indicator_text"]
+        self.indicator_title.configure(bg=COLORS["indicator"], fg=title_color)
         self.indicator_detail.configure(bg=COLORS["indicator"], fg=COLORS["muted"])
         if self.indicator_state:
             self.draw_indicator()
@@ -576,7 +577,8 @@ class WhisperLiveApp:
         if self.indicator_after_id:
             self.root.after_cancel(self.indicator_after_id)
             self.indicator_after_id = None
-        self.indicator_title.config(text=title, fg=COLORS["indicator_text"])
+        title_color = COLORS["warning"] if state == "processing" else COLORS["indicator_text"]
+        self.indicator_title.config(text=title, fg=title_color)
         self.indicator_detail.config(text=detail)
         self.position_indicator()
         self.indicator.deiconify()
@@ -595,20 +597,23 @@ class WhisperLiveApp:
         self.indicator_after_id = None
         self.indicator_canvas.delete("all")
         pulse = (math.sin(self.indicator_phase) + 1) / 2
+        is_processing = self.indicator_state == "processing"
+        accent = COLORS["warning"] if is_processing else COLORS["indicator_accent"]
+        glow = COLORS["warning"] if is_processing else COLORS["indicator_glow"]
         outer_radius = 18 + int(pulse * 3)
         center = 23
         self.indicator_canvas.create_oval(
             center - outer_radius, center - outer_radius, center + outer_radius, center + outer_radius,
-            outline=COLORS["indicator_glow"], width=2,
+            outline=glow, width=2,
         )
         self.indicator_canvas.create_arc(
             7, 7, 39, 39, start=int(self.indicator_phase * 38), extent=120,
-            outline=COLORS["indicator_accent"], width=2,
+            outline=accent, width=2,
         )
         core_radius = 8 + int(pulse * 2)
         self.indicator_canvas.create_oval(
             center - core_radius, center - core_radius, center + core_radius, center + core_radius,
-            fill=COLORS["indicator_accent"], outline="",
+            fill=accent, outline="",
         )
         self.indicator_canvas.create_oval(21, 21, 25, 25, fill=COLORS["indicator"], outline="")
         if not self.reduce_motion:

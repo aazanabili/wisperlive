@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import urllib.error
 import urllib.request
@@ -7,6 +8,7 @@ import urllib.request
 REPOSITORY = "aazanabili/wisperlive"
 RELEASES_API = f"https://api.github.com/repos/{REPOSITORY}/releases"
 RELEASES_PAGE = f"https://github.com/{REPOSITORY}/releases"
+USER_AGENT = "WhisperLive/1.1"
 
 
 class UpdateError(RuntimeError):
@@ -26,15 +28,23 @@ def is_newer_version(candidate, current):
 
 
 def get_latest_release():
-    request = urllib.request.Request(RELEASES_API, headers={"Accept": "application/vnd.github+json"})
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": USER_AGENT,
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("WHISPERLIVE_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(RELEASES_API, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             releases = json.load(response)
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            raise UpdateError("No public release was found. Publish WhisperLive.exe in GitHub Releases so installed apps can download updates.") from error
+            raise UpdateError("GitHub cannot access this private repository. Make releases public or set WHISPERLIVE_GITHUB_TOKEN.") from error
         if error.code == 403:
-            raise UpdateError("GitHub blocked this unauthenticated update check. Publish releases publicly or use a public release mirror.") from error
+            raise UpdateError("GitHub blocked this update check. Wait for the rate limit or set WHISPERLIVE_GITHUB_TOKEN.") from error
         raise UpdateError(f"Could not reach GitHub: {error}") from error
     except OSError as error:
         raise UpdateError(f"Could not reach GitHub: {error}") from error
