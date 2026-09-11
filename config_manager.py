@@ -11,6 +11,8 @@ DEFAULT_CONFIG = {
     "minimize_to_tray": True,
     "start_minimized": False,
     "run_at_startup": False,
+    "theme": "dark",
+    "installed_release_tag": "",
 }
 
 def load_config():

@@ -15,21 +15,26 @@ from audio_recorder import AudioRecorder
 from auto_typer import paste_text
 from config_manager import load_config, save_config
 from gemini_api import process_audio
+from updater import UpdateError, download_release, get_latest_release, restart_with_downloaded_release, update_from_source
 
 
-COLORS = {
-    "background": "#10131A",
-    "surface": "#181D27",
-    "surface_hover": "#202735",
-    "border": "#2C3444",
-    "text": "#F4F7FB",
-    "muted": "#A5B0C2",
-    "accent": "#7C8CFF",
-    "accent_hover": "#95A2FF",
-    "success": "#49D39A",
-    "warning": "#F5C761",
-    "danger": "#FF667D",
+THEMES = {
+    "dark": {
+        "background": "#10131A", "surface": "#181D27", "surface_hover": "#202735",
+        "border": "#2C3444", "text": "#F4F7FB", "muted": "#A5B0C2",
+        "accent": "#7C8CFF", "accent_hover": "#95A2FF", "success": "#49D39A",
+        "warning": "#F5C761", "danger": "#FF667D", "success_bg": "#15251F",
+        "warning_bg": "#322A17", "danger_bg": "#311B25", "indicator": "#171B25",
+    },
+    "light": {
+        "background": "#F4F6FA", "surface": "#FFFFFF", "surface_hover": "#EDF1F7",
+        "border": "#CED6E3", "text": "#172033", "muted": "#58657A",
+        "accent": "#4B5FD5", "accent_hover": "#3D4FB6", "success": "#087A52",
+        "warning": "#9C6500", "danger": "#C9364E", "success_bg": "#E4F5EC",
+        "warning_bg": "#FFF4D8", "danger_bg": "#FDE9ED", "indicator": "#FFFFFF",
+    },
 }
+COLORS = THEMES["dark"].copy()
 
 STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APP_NAME = "WhisperLive"
@@ -39,8 +44,8 @@ class WhisperLiveApp:
     def __init__(self, root):
         self.root = root
         self.root.title("WhisperLive")
-        self.root.geometry("560x610")
-        self.root.minsize(520, 570)
+        self.root.geometry("700x720")
+        self.root.minsize(620, 680)
         self.root.configure(bg=COLORS["background"])
 
         self.config = load_config()
@@ -50,6 +55,11 @@ class WhisperLiveApp:
         self.hotkey_handles = []
         self.indicator_after_id = None
         self.indicator_phase = 0
+        self.indicator_state = None
+        self.status_text = "Ready  |  Listening for your shortcut"
+        self.status_state = "ready"
+        self.is_capturing_shortcut = False
+        self.capture_modifiers = set()
         self.reduce_motion = self.prefers_reduced_motion()
 
         self.setup_styles()
@@ -82,21 +92,27 @@ class WhisperLiveApp:
     def setup_ui(self):
         container = tk.Frame(self.root, bg=COLORS["background"], padx=28, pady=24)
         container.pack(fill=tk.BOTH, expand=True)
+        self.content = container
 
         header = tk.Frame(container, bg=COLORS["background"])
         header.pack(fill=tk.X, pady=(0, 22))
+        title_group = tk.Frame(header, bg=COLORS["background"])
+        title_group.pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Label(
-            header, text="WhisperLive", bg=COLORS["background"], fg=COLORS["text"],
+            title_group, text="WhisperLive", bg=COLORS["background"], fg=COLORS["text"],
             font=("Segoe UI Semibold", 22),
         ).pack(anchor=tk.W)
         tk.Label(
-            header, text="Voice capture that stays out of your way.",
+            title_group, text="Voice capture that stays out of your way.",
             bg=COLORS["background"], fg=COLORS["muted"], font=("Segoe UI", 10),
         ).pack(anchor=tk.W, pady=(2, 0))
+        self.create_button(header, "About", self.show_about, secondary=True).pack(side=tk.RIGHT, padx=(8, 0))
+        theme_label = "Light mode" if self.config.get("theme") == "dark" else "Dark mode"
+        self.create_button(header, theme_label, self.toggle_theme, secondary=True).pack(side=tk.RIGHT)
 
         self.status_label = tk.Label(
-            container, text="Ready  |  Listening for your shortcut", anchor=tk.W,
-            bg="#15251F", fg=COLORS["success"], padx=12, pady=9,
+            container, text=self.status_text, anchor=tk.W,
+            bg=COLORS["success_bg"], fg=COLORS["success"], padx=12, pady=9,
             font=("Segoe UI Semibold", 10),
         )
         self.status_label.pack(fill=tk.X, pady=(0, 18))
@@ -129,7 +145,14 @@ class WhisperLiveApp:
 
         self.shortcut_var = tk.StringVar(value=self.config.get("shortcut", "ctrl+space"))
         self.add_label(settings, "Global shortcut")
-        self.create_entry(settings, self.shortcut_var).pack(fill=tk.X, pady=(0, 15))
+        shortcut_frame = tk.Frame(settings, bg=COLORS["surface"])
+        shortcut_frame.pack(fill=tk.X, pady=(0, 15))
+        self.shortcut_entry = self.create_entry(shortcut_frame, self.shortcut_var)
+        self.shortcut_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.shortcut_entry.bind("<FocusIn>", self.begin_shortcut_capture)
+        self.shortcut_entry.bind("<FocusOut>", self.cancel_shortcut_capture)
+        self.shortcut_entry.bind("<KeyPress>", self.capture_shortcut_key)
+        self.create_button(shortcut_frame, "Record", self.focus_shortcut_capture, secondary=True).pack(side=tk.LEFT, padx=(8, 0))
 
         self.mode_var = tk.StringVar(value=self.config.get("mode", "toggle"))
         self.add_label(settings, "Recording behavior")
@@ -154,7 +177,10 @@ class WhisperLiveApp:
 
         actions = tk.Frame(container, bg=COLORS["background"])
         actions.pack(fill=tk.X, pady=(20, 0))
+        self.update_button = self.create_button(actions, "Update", self.start_update, secondary=True)
+        self.update_button.pack(side=tk.LEFT)
         self.create_button(actions, "Save changes", self.save_and_apply).pack(side=tk.RIGHT)
+        self.set_status(self.status_text, self.status_state)
 
     def add_label(self, parent, text):
         tk.Label(
@@ -205,8 +231,7 @@ class WhisperLiveApp:
             self.api_entry.config(show="*")
             self.show_btn.config(text="Show")
 
-    def save_and_apply(self):
-        self.clear_hotkeys()
+    def collect_form_values(self):
         self.config.update({
             "api_key": self.api_key_var.get().strip(),
             "target_language": self.lang_var.get(),
@@ -216,6 +241,88 @@ class WhisperLiveApp:
             "start_minimized": self.start_minimized_var.get(),
             "run_at_startup": self.run_at_startup_var.get(),
         })
+
+    def toggle_theme(self):
+        self.collect_form_values()
+        theme = "light" if self.config.get("theme") == "dark" else "dark"
+        self.config["theme"] = theme
+        COLORS.clear()
+        COLORS.update(THEMES[theme])
+        save_config(self.config)
+        self.root.configure(bg=COLORS["background"])
+        self.content.destroy()
+        self.setup_styles()
+        self.setup_ui()
+        self.refresh_indicator_theme()
+
+    def show_about(self):
+        about = tk.Toplevel(self.root)
+        about.title("About WhisperLive")
+        about.transient(self.root)
+        about.resizable(False, False)
+        about.configure(bg=COLORS["surface"])
+        panel = tk.Frame(about, bg=COLORS["surface"], padx=28, pady=24)
+        panel.pack(fill=tk.BOTH, expand=True)
+        tk.Label(panel, text="WhisperLive", bg=COLORS["surface"], fg=COLORS["text"], font=("Segoe UI Semibold", 16)).pack(anchor=tk.W)
+        tk.Label(
+            panel, text="About content will be added here.", bg=COLORS["surface"], fg=COLORS["muted"],
+            font=("Segoe UI", 10), wraplength=300, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(8, 20))
+        self.create_button(panel, "Close", about.destroy, secondary=True).pack(anchor=tk.E)
+
+    def focus_shortcut_capture(self):
+        self.shortcut_entry.focus_set()
+
+    def begin_shortcut_capture(self, _event=None):
+        if self.is_capturing_shortcut:
+            return
+        self.is_capturing_shortcut = True
+        self.capture_modifiers.clear()
+        self.clear_hotkeys()
+        self.shortcut_var.set("Press the shortcut now")
+        self.shortcut_entry.selection_range(0, tk.END)
+
+    def cancel_shortcut_capture(self, _event=None):
+        if not self.is_capturing_shortcut:
+            return
+        self.is_capturing_shortcut = False
+        self.capture_modifiers.clear()
+        if self.shortcut_var.get() == "Press the shortcut now":
+            self.shortcut_var.set(self.config.get("shortcut", "ctrl+space"))
+        self.setup_hotkeys()
+
+    def capture_shortcut_key(self, event):
+        if not self.is_capturing_shortcut:
+            return None
+        modifier_names = {
+            "Control_L": "ctrl", "Control_R": "ctrl", "Shift_L": "shift", "Shift_R": "shift",
+            "Alt_L": "alt", "Alt_R": "alt", "Win_L": "windows", "Win_R": "windows",
+        }
+        modifier = modifier_names.get(event.keysym)
+        if modifier:
+            self.capture_modifiers.add(modifier)
+            return "break"
+        if event.keysym == "Escape":
+            self.shortcut_var.set(self.config.get("shortcut", "ctrl+space"))
+            self.cancel_shortcut_capture()
+            return "break"
+        key = event.keysym.lower()
+        key_names = {"prior": "page up", "next": "page down", "return": "enter", "escape": "esc"}
+        key = key_names.get(key, key)
+        modifiers = [name for name in ("ctrl", "alt", "shift", "windows") if name in self.capture_modifiers]
+        shortcut = "+".join([*modifiers, key])
+        self.shortcut_var.set(shortcut)
+        self.is_capturing_shortcut = False
+        self.capture_modifiers.clear()
+        self.shortcut_entry.selection_clear()
+        self.shortcut_entry.focus_set()
+        self.setup_hotkeys()
+        self.set_status("Shortcut recorded. Save changes to apply it.", "ready")
+        return "break"
+
+    def save_and_apply(self):
+        self.clear_hotkeys()
+        self.collect_form_values()
         if not self.set_startup_registration(self.config["run_at_startup"]):
             self.config["run_at_startup"] = False
             self.run_at_startup_var.set(False)
@@ -321,13 +428,66 @@ class WhisperLiveApp:
 
     def set_status(self, text, state):
         palettes = {
-            "ready": ("#15251F", COLORS["success"]),
-            "recording": ("#311B25", COLORS["danger"]),
-            "processing": ("#322A17", COLORS["warning"]),
-            "error": ("#311B25", COLORS["danger"]),
+            "ready": (COLORS["success_bg"], COLORS["success"]),
+            "recording": (COLORS["danger_bg"], COLORS["danger"]),
+            "processing": (COLORS["warning_bg"], COLORS["warning"]),
+            "error": (COLORS["danger_bg"], COLORS["danger"]),
         }
+        self.status_text = text
+        self.status_state = state
         background, foreground = palettes[state]
         self.status_label.config(text=text, bg=background, fg=foreground)
+
+    def start_update(self):
+        self.update_button.config(state=tk.DISABLED, text="Checking...")
+        self.set_status("Checking GitHub for an update...", "processing")
+        threading.Thread(target=self.update_thread, daemon=True).start()
+
+    def update_thread(self):
+        try:
+            if getattr(sys, "frozen", False):
+                release = get_latest_release()
+                tag = release.get("tag_name", "")
+                if tag and tag == self.config.get("installed_release_tag"):
+                    self.root.after(0, lambda: self.update_complete("You already have the latest release."))
+                    return
+                self.root.after(0, lambda: self.set_status("Downloading the latest release...", "processing"))
+                tag, download_path = download_release(release)
+                self.config["installed_release_tag"] = tag
+                save_config(self.config)
+                self.root.after(0, lambda: self.finish_release_update(download_path))
+            else:
+                output = update_from_source()
+                self.root.after(0, lambda: self.finish_source_update(output))
+        except Exception as error:
+            message = str(error)
+            self.root.after(0, lambda: self.update_failed(message))
+
+    def update_complete(self, message):
+        self.update_button.config(state=tk.NORMAL, text="Update")
+        self.set_status(message, "ready")
+
+    def update_failed(self, message):
+        self.update_button.config(state=tk.NORMAL, text="Update")
+        self.set_status(message, "error")
+
+    def finish_release_update(self, download_path):
+        self.set_status("Update downloaded. Restarting WhisperLive...", "processing")
+        restart_with_downloaded_release(download_path)
+        self.quit_app()
+
+    def finish_source_update(self, output):
+        if "Already up to date" in output:
+            self.update_complete("You already have the latest source version.")
+            return
+        self.set_status("Source updated. Restarting WhisperLive...", "processing")
+        self.root.after(400, self.restart_from_source)
+
+    def restart_from_source(self):
+        self.clear_hotkeys()
+        self.tray_icon.stop()
+        self.root.destroy()
+        os.execl(sys.executable, sys.executable, os.path.abspath(__file__))
 
     @staticmethod
     def prefers_reduced_motion():
@@ -345,16 +505,31 @@ class WhisperLiveApp:
         self.indicator.overrideredirect(True)
         self.indicator.attributes("-topmost", True)
         self.indicator.configure(bg=COLORS["border"])
-        panel = tk.Frame(self.indicator, bg="#171B25", padx=16, pady=12)
+        panel = tk.Frame(self.indicator, bg=COLORS["indicator"], padx=16, pady=12)
         panel.pack(padx=1, pady=1)
-        self.indicator_canvas = tk.Canvas(panel, width=34, height=34, bg="#171B25", highlightthickness=0)
+        self.indicator_panel = panel
+        self.indicator_canvas = tk.Canvas(panel, width=34, height=34, bg=COLORS["indicator"], highlightthickness=0)
         self.indicator_canvas.pack(side=tk.LEFT, padx=(0, 11))
-        labels = tk.Frame(panel, bg="#171B25")
+        labels = tk.Frame(panel, bg=COLORS["indicator"])
         labels.pack(side=tk.LEFT)
-        self.indicator_title = tk.Label(labels, text="Recording", bg="#171B25", fg=COLORS["text"], font=("Segoe UI Semibold", 10))
+        self.indicator_labels = labels
+        self.indicator_title = tk.Label(labels, text="Recording", bg=COLORS["indicator"], fg=COLORS["text"], font=("Segoe UI Semibold", 10))
         self.indicator_title.pack(anchor=tk.W)
-        self.indicator_detail = tk.Label(labels, text="Listening for your voice", bg="#171B25", fg=COLORS["muted"], font=("Segoe UI", 9))
+        self.indicator_detail = tk.Label(labels, text="Listening for your voice", bg=COLORS["indicator"], fg=COLORS["muted"], font=("Segoe UI", 9))
         self.indicator_detail.pack(anchor=tk.W)
+
+    def refresh_indicator_theme(self):
+        if self.indicator_after_id:
+            self.root.after_cancel(self.indicator_after_id)
+            self.indicator_after_id = None
+        self.indicator.configure(bg=COLORS["border"])
+        self.indicator_panel.configure(bg=COLORS["indicator"])
+        self.indicator_labels.configure(bg=COLORS["indicator"])
+        self.indicator_canvas.configure(bg=COLORS["indicator"])
+        self.indicator_title.configure(bg=COLORS["indicator"], fg=COLORS["text"])
+        self.indicator_detail.configure(bg=COLORS["indicator"], fg=COLORS["muted"])
+        if self.indicator_state:
+            self.draw_indicator()
 
     def show_indicator(self, title, detail, state):
         if self.indicator_after_id:
@@ -392,7 +567,7 @@ class WhisperLiveApp:
                 self.indicator_after_id = self.root.after(180, self.draw_indicator)
         else:
             self.indicator_canvas.create_oval(7, 7, 27, 27, fill=color, outline="")
-            self.indicator_canvas.create_arc(10, 10, 24, 24, start=40, extent=275, outline="#171B25", width=2)
+            self.indicator_canvas.create_arc(10, 10, 24, 24, start=40, extent=275, outline=COLORS["indicator"], width=2)
 
     def hide_indicator(self):
         if self.indicator_after_id:
