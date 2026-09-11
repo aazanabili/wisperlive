@@ -18,6 +18,7 @@ from auto_typer import paste_text
 from config_manager import load_config, save_config
 from gemini_api import process_audio
 from updater import RELEASES_PAGE
+from version import APP_VERSION
 
 
 THEMES = {
@@ -289,22 +290,26 @@ class WhisperLiveApp:
         about.transient(self.root)
         about.resizable(False, False)
         about.configure(bg=COLORS["surface"])
-        panel = tk.Frame(about, bg=COLORS["surface"], padx=28, pady=24)
+        about.geometry("430x370")
+        panel = tk.Frame(about, bg=COLORS["surface"], padx=30, pady=26)
         panel.pack(fill=tk.BOTH, expand=True)
-        tk.Label(panel, text="WhisperLive", bg=COLORS["surface"], fg=COLORS["text"], font=("Segoe UI Semibold", 16)).pack(anchor=tk.W)
+
+        tk.Label(panel, text="WhisperLive", bg=COLORS["surface"], fg=COLORS["text"], font=("Segoe UI Semibold", 20)).pack(anchor=tk.W)
         tk.Label(
             panel, text=f"Current version: {APP_VERSION}", bg=COLORS["surface"], fg=COLORS["muted"],
             font=("Segoe UI", 10),
-        ).pack(anchor=tk.W, pady=(4, 0))
+        ).pack(anchor=tk.W, pady=(3, 16))
+        tk.Frame(panel, bg=COLORS["border"], height=1).pack(fill=tk.X, pady=(0, 16))
         tk.Label(
             panel, text="Informatics Engineer Abdullatif Zanabili", bg=COLORS["surface"], fg=COLORS["muted"],
-            font=("Segoe UI", 10), wraplength=300, justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(8, 16))
+            font=("Segoe UI Semibold", 11), wraplength=340, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 16))
+        tk.Label(panel, text="Connect", bg=COLORS["surface"], fg=COLORS["text"], font=("Segoe UI Semibold", 10)).pack(anchor=tk.W, pady=(0, 5))
         self.create_link(panel, "Personal website", "https://zanabili.dev/").pack(anchor=tk.W, pady=2)
         self.create_link(panel, "Support WhisperLive", "https://paypal.me/Zanabili").pack(anchor=tk.W, pady=2)
         self.create_link(panel, "Project on GitHub", "https://github.com/aazanabili/wisperlive").pack(anchor=tk.W, pady=2)
-        self.create_link(panel, "info@zanabili.dev", "mailto:info@zanabili.dev").pack(anchor=tk.W, pady=2)
-        self.create_button(panel, "Close", about.destroy, secondary=True).pack(anchor=tk.E, pady=(18, 0))
+        self.create_link(panel, "Questions: info@zanabili.dev", "mailto:info@zanabili.dev").pack(anchor=tk.W, pady=2)
+        self.create_button(panel, "Close", about.destroy, secondary=True).pack(anchor=tk.E, pady=(20, 0))
 
     def create_link(self, parent, text, url):
         link = tk.Label(
