@@ -25,6 +25,8 @@ a = Analysis(
         '_tkinter',
         'cffi',
         'numpy',
+        'pystray',
+        'PIL',
     ],
     hookspath=[],
     hooksconfig={},

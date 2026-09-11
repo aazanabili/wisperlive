@@ -7,7 +7,10 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "target_language": "English",
     "shortcut": "ctrl+space",
-    "mode": "toggle"  # can be 'toggle' or 'hold'
+    "mode": "toggle",  # can be 'toggle' or 'hold'
+    "minimize_to_tray": True,
+    "start_minimized": False,
+    "run_at_startup": False,
 }
 
 def load_config():
