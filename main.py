@@ -17,8 +17,7 @@ from audio_recorder import AudioRecorder
 from auto_typer import paste_text
 from config_manager import load_config, save_config
 from gemini_api import process_audio
-from updater import RELEASES_PAGE, UpdateError, get_latest_release, is_newer_version
-from version import APP_VERSION
+from updater import RELEASES_PAGE
 
 
 THEMES = {
@@ -198,9 +197,7 @@ class WhisperLiveApp:
         self.create_checkbutton(preference_controls, "Start minimized", self.start_minimized_var).pack(side=tk.LEFT, padx=(16, 0))
         self.create_checkbutton(preference_controls, "Run at sign-in", self.run_at_startup_var).pack(side=tk.LEFT, padx=(16, 0))
 
-        self.update_button = self.create_button(self.footer, "Check for updates", self.start_update, secondary=True)
-        self.update_button.pack(side=tk.LEFT)
-        self.create_button(self.footer, "Open GitHub releases", self.open_releases, secondary=True).pack(side=tk.LEFT, padx=(8, 0))
+        self.create_button(self.footer, "Open GitHub releases", self.open_releases, secondary=True).pack(side=tk.LEFT)
         self.create_button(self.footer, "Save changes", self.save_and_apply).pack(side=tk.RIGHT)
         self.set_status(self.status_text, self.status_state)
 
@@ -488,47 +485,9 @@ class WhisperLiveApp:
         self.status_label.config(text=text, bg=background, fg=foreground)
         self.root.after_idle(self.fit_window_to_content)
 
-    def start_update(self):
-        self.update_button.config(state=tk.DISABLED, text="Checking...")
-        self.root.deiconify()
-        self.root.lift()
-        self.root.focus_force()
-        self.set_status("Checking GitHub for an update...", "processing")
-        threading.Thread(target=self.check_update_thread, daemon=True).start()
-
-    def check_update_thread(self):
-        try:
-            release = get_latest_release()
-            tag = release.get("tag_name", "")
-            if is_newer_version(tag, APP_VERSION):
-                self.root.after(0, lambda: self.update_available(tag))
-            else:
-                self.root.after(0, lambda: self.update_complete("You already have the latest release."))
-        except UpdateError as error:
-            message = str(error)
-            self.root.after(0, lambda: self.update_manual(message))
-
-    def update_available(self, tag):
-        self.update_button.config(state=tk.NORMAL, text="Check for updates")
-        self.set_status(
-            f"Your current version is {APP_VERSION}. Version {tag} is available in the repository. Open GitHub Releases to download it.",
-            "processing",
-        )
-
-    def update_manual(self, reason):
-        self.update_button.config(state=tk.NORMAL, text="Check for updates")
-        self.set_status(
-            f"Current version: {APP_VERSION}. {reason} Open GitHub Releases to view and download the latest version.",
-            "error",
-        )
-
     @staticmethod
     def open_releases():
         webbrowser.open(RELEASES_PAGE)
-
-    def update_complete(self, message):
-        self.update_button.config(state=tk.NORMAL, text="Check for updates")
-        self.set_status(message, "ready")
 
     @staticmethod
     def prefers_reduced_motion():
