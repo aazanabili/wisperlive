@@ -6,7 +6,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets/whisperlive.ico', 'assets'), ('assets/whisperlive.png', 'assets')],
     hiddenimports=[
         'keyboard',
         'sounddevice',
@@ -48,6 +48,7 @@ exe = EXE(
     a.datas,
     [],
     name='WhisperLive',
+    icon='assets/whisperlive.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -11,7 +11,7 @@ import winreg
 import keyboard
 import pystray
 import winsound
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from audio_recorder import AudioRecorder
 from auto_typer import paste_text
@@ -44,19 +44,26 @@ COLORS = THEMES["dark"].copy()
 
 STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APP_NAME = "WhisperLive"
+APP_ID = "AbdullatifZanabili.WhisperLive"
+
+
+def resource_path(relative_path):
+    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 
 
 class WhisperLiveApp:
     def __init__(self, root):
         self.root = root
         self.root.title("WhisperLive")
-        self.root.geometry("700x720")
-        self.root.minsize(620, 680)
+        self.root.geometry("700x650")
+        self.root.minsize(620, 620)
 
         self.config = load_config()
         COLORS.clear()
         COLORS.update(THEMES.get(self.config.get("theme"), THEMES["dark"]))
         self.root.configure(bg=COLORS["background"])
+        self.root.iconbitmap(resource_path("assets/whisperlive.ico"))
         self.recorder = AudioRecorder()
         self.is_processing = False
         self.is_exiting = False
@@ -98,12 +105,12 @@ class WhisperLiveApp:
         style.map("Dark.TCombobox", fieldbackground=[("readonly", COLORS["surface_hover"])])
 
     def setup_ui(self):
-        container = tk.Frame(self.root, bg=COLORS["background"], padx=28, pady=24)
+        container = tk.Frame(self.root, bg=COLORS["background"], padx=28, pady=16)
         container.pack(fill=tk.BOTH, expand=True)
         self.content = container
 
         header = tk.Frame(container, bg=COLORS["background"])
-        header.pack(fill=tk.X, pady=(0, 22))
+        header.pack(fill=tk.X, pady=(0, 12))
         title_group = tk.Frame(header, bg=COLORS["background"])
         title_group.pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Label(
@@ -123,10 +130,10 @@ class WhisperLiveApp:
             bg=COLORS["success_bg"], fg=COLORS["success"], padx=12, pady=9,
             font=("Segoe UI Semibold", 10),
         )
-        self.status_label.pack(fill=tk.X, pady=(0, 18))
+        self.status_label.pack(fill=tk.X, pady=(0, 12))
 
         settings = tk.Frame(container, bg=COLORS["surface"], highlightbackground=COLORS["border"],
-                            highlightthickness=1, padx=18, pady=16)
+                            highlightthickness=1, padx=18, pady=12)
         settings.pack(fill=tk.X)
 
         self.api_key_var = tk.StringVar(value=self.config.get("api_key", ""))
@@ -140,7 +147,7 @@ class WhisperLiveApp:
         tk.Label(
             settings, text="Get a key from aistudio.google.com/app/apikey",
             bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9),
-        ).pack(anchor=tk.W, pady=(0, 15))
+        ).pack(anchor=tk.W, pady=(0, 10))
 
         self.lang_var = tk.StringVar(value=self.config.get("target_language", "English"))
         self.add_label(settings, "Output language")
@@ -149,12 +156,12 @@ class WhisperLiveApp:
             values=["English", "العربية", "Français", "Español", "Deutsch", "中文", "日本語"],
             state="readonly", style="Dark.TCombobox",
         )
-        lang_combo.pack(fill=tk.X, pady=(0, 15))
+        lang_combo.pack(fill=tk.X, pady=(0, 10))
 
         self.shortcut_var = tk.StringVar(value=self.config.get("shortcut", "ctrl+space"))
         self.add_label(settings, "Global shortcut")
         shortcut_frame = tk.Frame(settings, bg=COLORS["surface"])
-        shortcut_frame.pack(fill=tk.X, pady=(0, 15))
+        shortcut_frame.pack(fill=tk.X, pady=(0, 10))
         self.shortcut_entry = self.create_entry(shortcut_frame, self.shortcut_var)
         self.shortcut_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.shortcut_entry.bind("<FocusIn>", self.begin_shortcut_capture)
@@ -170,8 +177,8 @@ class WhisperLiveApp:
         self.create_radio(mode_row, "Hold to record", "hold").pack(side=tk.LEFT, padx=(18, 0))
 
         preferences = tk.Frame(container, bg=COLORS["surface"], highlightbackground=COLORS["border"],
-                               highlightthickness=1, padx=18, pady=16)
-        preferences.pack(fill=tk.X, pady=(14, 0))
+                               highlightthickness=1, padx=18, pady=12)
+        preferences.pack(fill=tk.X, pady=(12, 0))
         tk.Label(
             preferences, text="Background behavior", bg=COLORS["surface"], fg=COLORS["text"],
             font=("Segoe UI Semibold", 11),
@@ -179,12 +186,14 @@ class WhisperLiveApp:
         self.minimize_to_tray_var = tk.BooleanVar(value=self.config.get("minimize_to_tray", True))
         self.start_minimized_var = tk.BooleanVar(value=self.config.get("start_minimized", False))
         self.run_at_startup_var = tk.BooleanVar(value=self.config.get("run_at_startup", False))
-        self.create_checkbutton(preferences, "Minimize to the system tray", self.minimize_to_tray_var).pack(anchor=tk.W, pady=3)
-        self.create_checkbutton(preferences, "Start minimized", self.start_minimized_var).pack(anchor=tk.W, pady=3)
-        self.create_checkbutton(preferences, "Run automatically when I sign in", self.run_at_startup_var).pack(anchor=tk.W, pady=3)
+        preference_controls = tk.Frame(preferences, bg=COLORS["surface"])
+        preference_controls.pack(fill=tk.X)
+        self.create_checkbutton(preference_controls, "Minimize to tray", self.minimize_to_tray_var).pack(side=tk.LEFT)
+        self.create_checkbutton(preference_controls, "Start minimized", self.start_minimized_var).pack(side=tk.LEFT, padx=(16, 0))
+        self.create_checkbutton(preference_controls, "Run at sign-in", self.run_at_startup_var).pack(side=tk.LEFT, padx=(16, 0))
 
         actions = tk.Frame(container, bg=COLORS["background"])
-        actions.pack(fill=tk.X, pady=(20, 0))
+        actions.pack(fill=tk.X, pady=(14, 0))
         self.update_button = self.create_button(actions, "Update", self.start_update, secondary=True)
         self.update_button.pack(side=tk.LEFT)
         self.create_button(actions, "Save changes", self.save_and_apply).pack(side=tk.RIGHT)
@@ -602,12 +611,7 @@ class WhisperLiveApp:
         self.indicator.withdraw()
 
     def create_tray_icon(self):
-        image = Image.new("RGBA", (64, 64), COLORS["background"])
-        draw = ImageDraw.Draw(image)
-        draw.ellipse((8, 8, 56, 56), fill=COLORS["accent"])
-        draw.rounded_rectangle((26, 18, 38, 39), radius=6, fill=COLORS["background"])
-        draw.arc((20, 27, 44, 48), start=0, end=180, fill=COLORS["background"], width=4)
-        draw.line((32, 48, 32, 54), fill=COLORS["background"], width=4)
+        image = Image.open(resource_path("assets/whisperlive.png")).convert("RGBA")
         self.tray_icon = pystray.Icon(
             APP_NAME, image, APP_NAME,
             menu=pystray.Menu(
@@ -655,6 +659,7 @@ class WhisperLiveApp:
 
 
 if __name__ == "__main__":
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     root = tk.Tk()
     app = WhisperLiveApp(root)
     root.mainloop()

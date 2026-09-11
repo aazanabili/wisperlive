@@ -2,11 +2,12 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 
 REPOSITORY = "aazanabili/wisperlive"
-RELEASE_API = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+RELEASES_API = f"https://api.github.com/repos/{REPOSITORY}/releases"
 EXECUTABLE_NAME = "WhisperLive.exe"
 
 
@@ -36,12 +37,20 @@ def update_from_source():
 
 
 def get_latest_release():
-    request = urllib.request.Request(RELEASE_API, headers={"Accept": "application/vnd.github+json"})
+    request = urllib.request.Request(RELEASES_API, headers={"Accept": "application/vnd.github+json"})
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            return json.load(response)
+            releases = json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            raise UpdateError("Updates are unavailable until this GitHub repository and a release are publicly accessible.") from error
+        raise UpdateError(f"Could not reach GitHub: {error}") from error
     except OSError as error:
         raise UpdateError(f"Could not reach GitHub: {error}") from error
+    release = next((item for item in releases if not item.get("draft") and not item.get("prerelease")), None)
+    if not release:
+        raise UpdateError("No published GitHub release is available yet.")
+    return release
 
 
 def download_release(release):
