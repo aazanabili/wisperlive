@@ -17,7 +17,7 @@ from audio_recorder import AudioRecorder
 from auto_typer import paste_text
 from config_manager import load_config, save_config
 from gemini_api import process_audio
-from updater import UpdateError, download_release, get_latest_release, is_newer_version, restart_with_downloaded_release, update_from_source
+from updater import RELEASES_PAGE, UpdateError, get_latest_release, is_newer_version
 from version import APP_VERSION
 
 
@@ -57,7 +57,7 @@ class WhisperLiveApp:
     def __init__(self, root):
         self.root = root
         self.root.title("WhisperLive")
-        self.root.geometry("700x650")
+        self.root.geometry("700x720")
         self.root.minsize(620, 620)
 
         self.config = load_config()
@@ -82,6 +82,7 @@ class WhisperLiveApp:
 
         self.setup_styles()
         self.setup_ui()
+        self.fit_window_to_content()
         self.create_recording_indicator()
         self.create_tray_icon()
         self.setup_hotkeys()
@@ -133,7 +134,7 @@ class WhisperLiveApp:
         self.status_label = tk.Label(
             container, text=self.status_text, anchor=tk.W,
             bg=COLORS["success_bg"], fg=COLORS["success"], padx=12, pady=9,
-            font=("Segoe UI Semibold", 10),
+            font=("Segoe UI Semibold", 10), justify=tk.LEFT, wraplength=620,
         )
         self.status_label.pack(fill=tk.X, pady=(0, 12))
 
@@ -199,8 +200,16 @@ class WhisperLiveApp:
 
         self.update_button = self.create_button(self.footer, "Check for updates", self.start_update, secondary=True)
         self.update_button.pack(side=tk.LEFT)
+        self.create_button(self.footer, "Open GitHub releases", self.open_releases, secondary=True).pack(side=tk.LEFT, padx=(8, 0))
         self.create_button(self.footer, "Save changes", self.save_and_apply).pack(side=tk.RIGHT)
         self.set_status(self.status_text, self.status_state)
+
+    def fit_window_to_content(self):
+        self.root.update_idletasks()
+        minimum_height = self.root.winfo_reqheight()
+        self.root.minsize(620, minimum_height)
+        if self.root.winfo_height() < minimum_height:
+            self.root.geometry(f"700x{minimum_height}")
 
     def add_label(self, parent, text):
         tk.Label(
@@ -274,6 +283,7 @@ class WhisperLiveApp:
         self.footer.destroy()
         self.setup_styles()
         self.setup_ui()
+        self.fit_window_to_content()
         self.refresh_indicator_theme()
 
     def show_about(self):
@@ -476,55 +486,49 @@ class WhisperLiveApp:
         self.status_state = state
         background, foreground = palettes[state]
         self.status_label.config(text=text, bg=background, fg=foreground)
+        self.root.after_idle(self.fit_window_to_content)
 
     def start_update(self):
         self.update_button.config(state=tk.DISABLED, text="Checking...")
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
         self.set_status("Checking GitHub for an update...", "processing")
-        threading.Thread(target=self.update_thread, daemon=True).start()
+        threading.Thread(target=self.check_update_thread, daemon=True).start()
 
-    def update_thread(self):
+    def check_update_thread(self):
         try:
-            if getattr(sys, "frozen", False):
-                release = get_latest_release()
-                tag = release.get("tag_name", "")
-                if not is_newer_version(tag, APP_VERSION):
-                    self.root.after(0, lambda: self.update_complete("You already have the latest release."))
-                    return
-                self.root.after(0, lambda: self.set_status(f"Version {tag} is available. Downloading...", "processing"))
-                tag, download_path = download_release(release)
-                self.root.after(0, lambda: self.finish_release_update(download_path))
+            release = get_latest_release()
+            tag = release.get("tag_name", "")
+            if is_newer_version(tag, APP_VERSION):
+                self.root.after(0, lambda: self.update_available(tag))
             else:
-                output = update_from_source()
-                self.root.after(0, lambda: self.finish_source_update(output))
-        except Exception as error:
+                self.root.after(0, lambda: self.update_complete("You already have the latest release."))
+        except UpdateError as error:
             message = str(error)
-            self.root.after(0, lambda: self.update_failed(message))
+            self.root.after(0, lambda: self.update_manual(message))
+
+    def update_available(self, tag):
+        self.update_button.config(state=tk.NORMAL, text="Check for updates")
+        self.set_status(
+            f"Your current version is {APP_VERSION}. Version {tag} is available in the repository. Open GitHub Releases to download it.",
+            "processing",
+        )
+
+    def update_manual(self, reason):
+        self.update_button.config(state=tk.NORMAL, text="Check for updates")
+        self.set_status(
+            f"Current version: {APP_VERSION}. {reason} Open GitHub Releases to view and download the latest version.",
+            "error",
+        )
+
+    @staticmethod
+    def open_releases():
+        webbrowser.open(RELEASES_PAGE)
 
     def update_complete(self, message):
         self.update_button.config(state=tk.NORMAL, text="Check for updates")
         self.set_status(message, "ready")
-
-    def update_failed(self, message):
-        self.update_button.config(state=tk.NORMAL, text="Check for updates")
-        self.set_status(message, "error")
-
-    def finish_release_update(self, download_path):
-        self.set_status("Update downloaded. Restarting WhisperLive...", "processing")
-        restart_with_downloaded_release(download_path)
-        self.quit_app()
-
-    def finish_source_update(self, output):
-        if "Already up to date" in output:
-            self.update_complete("You already have the latest source version.")
-            return
-        self.set_status("Source updated. Restarting WhisperLive...", "processing")
-        self.root.after(400, self.restart_from_source)
-
-    def restart_from_source(self):
-        self.clear_hotkeys()
-        self.tray_icon.stop()
-        self.root.destroy()
-        os.execl(sys.executable, sys.executable, os.path.abspath(__file__))
 
     @staticmethod
     def prefers_reduced_motion():
