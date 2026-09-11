@@ -667,6 +667,8 @@ class WhisperLiveApp:
 
 if __name__ == "__main__":
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    # Notify Explorer that the executable's multi-size icon has changed, including List view's 16 px cache.
+    ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
     root = tk.Tk()
     app = WhisperLiveApp(root)
     root.mainloop()
