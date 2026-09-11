@@ -17,7 +17,8 @@ from audio_recorder import AudioRecorder
 from auto_typer import paste_text
 from config_manager import load_config, save_config
 from gemini_api import process_audio
-from updater import UpdateError, download_release, get_latest_release, restart_with_downloaded_release, update_from_source
+from updater import UpdateError, download_release, get_latest_release, is_newer_version, restart_with_downloaded_release, update_from_source
+from version import APP_VERSION
 
 
 THEMES = {
@@ -107,8 +108,10 @@ class WhisperLiveApp:
         style.map("Dark.TCombobox", fieldbackground=[("readonly", COLORS["surface_hover"])])
 
     def setup_ui(self):
+        self.footer = tk.Frame(self.root, bg=COLORS["background"], padx=28, pady=14)
+        self.footer.pack(side=tk.BOTTOM, fill=tk.X)
         container = tk.Frame(self.root, bg=COLORS["background"], padx=28, pady=16)
-        container.pack(fill=tk.BOTH, expand=True)
+        container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.content = container
 
         header = tk.Frame(container, bg=COLORS["background"])
@@ -194,11 +197,9 @@ class WhisperLiveApp:
         self.create_checkbutton(preference_controls, "Start minimized", self.start_minimized_var).pack(side=tk.LEFT, padx=(16, 0))
         self.create_checkbutton(preference_controls, "Run at sign-in", self.run_at_startup_var).pack(side=tk.LEFT, padx=(16, 0))
 
-        actions = tk.Frame(container, bg=COLORS["background"])
-        actions.pack(fill=tk.X, pady=(14, 0))
-        self.update_button = self.create_button(actions, "Update", self.start_update, secondary=True)
+        self.update_button = self.create_button(self.footer, "Check for updates", self.start_update, secondary=True)
         self.update_button.pack(side=tk.LEFT)
-        self.create_button(actions, "Save changes", self.save_and_apply).pack(side=tk.RIGHT)
+        self.create_button(self.footer, "Save changes", self.save_and_apply).pack(side=tk.RIGHT)
         self.set_status(self.status_text, self.status_state)
 
     def add_label(self, parent, text):
@@ -270,6 +271,7 @@ class WhisperLiveApp:
         save_config(self.config)
         self.root.configure(bg=COLORS["background"])
         self.content.destroy()
+        self.footer.destroy()
         self.setup_styles()
         self.setup_ui()
         self.refresh_indicator_theme()
@@ -283,6 +285,10 @@ class WhisperLiveApp:
         panel = tk.Frame(about, bg=COLORS["surface"], padx=28, pady=24)
         panel.pack(fill=tk.BOTH, expand=True)
         tk.Label(panel, text="WhisperLive", bg=COLORS["surface"], fg=COLORS["text"], font=("Segoe UI Semibold", 16)).pack(anchor=tk.W)
+        tk.Label(
+            panel, text=f"Current version: {APP_VERSION}", bg=COLORS["surface"], fg=COLORS["muted"],
+            font=("Segoe UI", 10),
+        ).pack(anchor=tk.W, pady=(4, 0))
         tk.Label(
             panel, text="Informatics Engineer Abdullatif Zanabili", bg=COLORS["surface"], fg=COLORS["muted"],
             font=("Segoe UI", 10), wraplength=300, justify=tk.LEFT,
@@ -481,13 +487,11 @@ class WhisperLiveApp:
             if getattr(sys, "frozen", False):
                 release = get_latest_release()
                 tag = release.get("tag_name", "")
-                if tag and tag == self.config.get("installed_release_tag"):
+                if not is_newer_version(tag, APP_VERSION):
                     self.root.after(0, lambda: self.update_complete("You already have the latest release."))
                     return
-                self.root.after(0, lambda: self.set_status("Downloading the latest release...", "processing"))
+                self.root.after(0, lambda: self.set_status(f"Version {tag} is available. Downloading...", "processing"))
                 tag, download_path = download_release(release)
-                self.config["installed_release_tag"] = tag
-                save_config(self.config)
                 self.root.after(0, lambda: self.finish_release_update(download_path))
             else:
                 output = update_from_source()
@@ -497,11 +501,11 @@ class WhisperLiveApp:
             self.root.after(0, lambda: self.update_failed(message))
 
     def update_complete(self, message):
-        self.update_button.config(state=tk.NORMAL, text="Update")
+        self.update_button.config(state=tk.NORMAL, text="Check for updates")
         self.set_status(message, "ready")
 
     def update_failed(self, message):
-        self.update_button.config(state=tk.NORMAL, text="Update")
+        self.update_button.config(state=tk.NORMAL, text="Check for updates")
         self.set_status(message, "error")
 
     def finish_release_update(self, download_path):

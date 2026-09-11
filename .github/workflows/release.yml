@@ -27,6 +27,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install google-generativeai keyboard sounddevice soundfile pyperclip pystray Pillow pyinstaller
 
+    - name: Stamp release version
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        "APP_VERSION = '${{ github.ref_name }}'" | Set-Content version.py
+
     - name: Build EXE with PyInstaller
       run: |
         pyinstaller -y WhisperLive.spec
