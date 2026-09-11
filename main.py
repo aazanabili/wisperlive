@@ -1,9 +1,11 @@
 import ctypes
+import math
 import os
 import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
+import webbrowser
 import winreg
 
 import keyboard
@@ -24,14 +26,18 @@ THEMES = {
         "border": "#2C3444", "text": "#F4F7FB", "muted": "#A5B0C2",
         "accent": "#7C8CFF", "accent_hover": "#95A2FF", "success": "#49D39A",
         "warning": "#F5C761", "danger": "#FF667D", "success_bg": "#15251F",
-        "warning_bg": "#322A17", "danger_bg": "#311B25", "indicator": "#171B25",
+        "warning_bg": "#322A17", "danger_bg": "#311B25", "indicator": "#0D1728",
+        "indicator_border": "#27466F", "indicator_glow": "#1F4D84", "indicator_accent": "#76ABFF",
+        "indicator_text": "#EDF4FF",
     },
     "light": {
         "background": "#F4F6FA", "surface": "#FFFFFF", "surface_hover": "#EDF1F7",
         "border": "#CED6E3", "text": "#172033", "muted": "#58657A",
         "accent": "#4B5FD5", "accent_hover": "#3D4FB6", "success": "#087A52",
         "warning": "#9C6500", "danger": "#C9364E", "success_bg": "#E4F5EC",
-        "warning_bg": "#FFF4D8", "danger_bg": "#FDE9ED", "indicator": "#FFFFFF",
+        "warning_bg": "#FFF4D8", "danger_bg": "#FDE9ED", "indicator": "#F8FBFF",
+        "indicator_border": "#BDD2F2", "indicator_glow": "#DCEAFF", "indicator_accent": "#397BE0",
+        "indicator_text": "#172F54",
     },
 }
 COLORS = THEMES["dark"].copy()
@@ -46,9 +52,11 @@ class WhisperLiveApp:
         self.root.title("WhisperLive")
         self.root.geometry("700x720")
         self.root.minsize(620, 680)
-        self.root.configure(bg=COLORS["background"])
 
         self.config = load_config()
+        COLORS.clear()
+        COLORS.update(THEMES.get(self.config.get("theme"), THEMES["dark"]))
+        self.root.configure(bg=COLORS["background"])
         self.recorder = AudioRecorder()
         self.is_processing = False
         self.is_exiting = False
@@ -265,10 +273,23 @@ class WhisperLiveApp:
         panel.pack(fill=tk.BOTH, expand=True)
         tk.Label(panel, text="WhisperLive", bg=COLORS["surface"], fg=COLORS["text"], font=("Segoe UI Semibold", 16)).pack(anchor=tk.W)
         tk.Label(
-            panel, text="About content will be added here.", bg=COLORS["surface"], fg=COLORS["muted"],
+            panel, text="Abdullatif  Zanabili, Engineer Abdullatif  Zanabili.", bg=COLORS["surface"], fg=COLORS["muted"],
             font=("Segoe UI", 10), wraplength=300, justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(8, 20))
-        self.create_button(panel, "Close", about.destroy, secondary=True).pack(anchor=tk.E)
+        ).pack(anchor=tk.W, pady=(8, 16))
+        self.create_link(panel, "Personal website", "https://zanabili.dev/").pack(anchor=tk.W, pady=2)
+        self.create_link(panel, "Support WhisperLive", "https://paypal.me/Zanabili").pack(anchor=tk.W, pady=2)
+        self.create_link(panel, "info@zanabili.dev", "mailto:info@zanabili.dev").pack(anchor=tk.W, pady=2)
+        self.create_button(panel, "Close", about.destroy, secondary=True).pack(anchor=tk.E, pady=(18, 0))
+
+    def create_link(self, parent, text, url):
+        link = tk.Label(
+            parent, text=text, bg=COLORS["surface"], fg=COLORS["accent"], cursor="hand2",
+            font=("Segoe UI Semibold", 10),
+        )
+        link.bind("<Button-1>", lambda _event: webbrowser.open(url))
+        link.bind("<Enter>", lambda _event: link.config(fg=COLORS["accent_hover"]))
+        link.bind("<Leave>", lambda _event: link.config(fg=COLORS["accent"]))
+        return link
 
     def focus_shortcut_capture(self):
         self.shortcut_entry.focus_set()
@@ -504,16 +525,16 @@ class WhisperLiveApp:
         self.indicator.withdraw()
         self.indicator.overrideredirect(True)
         self.indicator.attributes("-topmost", True)
-        self.indicator.configure(bg=COLORS["border"])
-        panel = tk.Frame(self.indicator, bg=COLORS["indicator"], padx=16, pady=12)
+        self.indicator.configure(bg=COLORS["indicator_border"])
+        panel = tk.Frame(self.indicator, bg=COLORS["indicator"], padx=18, pady=10)
         panel.pack(padx=1, pady=1)
         self.indicator_panel = panel
-        self.indicator_canvas = tk.Canvas(panel, width=34, height=34, bg=COLORS["indicator"], highlightthickness=0)
+        self.indicator_canvas = tk.Canvas(panel, width=46, height=46, bg=COLORS["indicator"], highlightthickness=0)
         self.indicator_canvas.pack(side=tk.LEFT, padx=(0, 11))
         labels = tk.Frame(panel, bg=COLORS["indicator"])
         labels.pack(side=tk.LEFT)
         self.indicator_labels = labels
-        self.indicator_title = tk.Label(labels, text="Recording", bg=COLORS["indicator"], fg=COLORS["text"], font=("Segoe UI Semibold", 10))
+        self.indicator_title = tk.Label(labels, text="Recording", bg=COLORS["indicator"], fg=COLORS["indicator_text"], font=("Segoe UI Semibold", 10))
         self.indicator_title.pack(anchor=tk.W)
         self.indicator_detail = tk.Label(labels, text="Listening for your voice", bg=COLORS["indicator"], fg=COLORS["muted"], font=("Segoe UI", 9))
         self.indicator_detail.pack(anchor=tk.W)
@@ -522,11 +543,11 @@ class WhisperLiveApp:
         if self.indicator_after_id:
             self.root.after_cancel(self.indicator_after_id)
             self.indicator_after_id = None
-        self.indicator.configure(bg=COLORS["border"])
+        self.indicator.configure(bg=COLORS["indicator_border"])
         self.indicator_panel.configure(bg=COLORS["indicator"])
         self.indicator_labels.configure(bg=COLORS["indicator"])
         self.indicator_canvas.configure(bg=COLORS["indicator"])
-        self.indicator_title.configure(bg=COLORS["indicator"], fg=COLORS["text"])
+        self.indicator_title.configure(bg=COLORS["indicator"], fg=COLORS["indicator_text"])
         self.indicator_detail.configure(bg=COLORS["indicator"], fg=COLORS["muted"])
         if self.indicator_state:
             self.draw_indicator()
@@ -535,8 +556,7 @@ class WhisperLiveApp:
         if self.indicator_after_id:
             self.root.after_cancel(self.indicator_after_id)
             self.indicator_after_id = None
-        color = COLORS["danger"] if state == "recording" else COLORS["warning"]
-        self.indicator_title.config(text=title, fg=color)
+        self.indicator_title.config(text=title, fg=COLORS["indicator_text"])
         self.indicator_detail.config(text=detail)
         self.position_indicator()
         self.indicator.deiconify()
@@ -548,26 +568,32 @@ class WhisperLiveApp:
         self.indicator.update_idletasks()
         width = self.indicator.winfo_width()
         x = (self.root.winfo_screenwidth() - width) // 2
-        y = self.root.winfo_screenheight() - self.indicator.winfo_height() - 90
+        y = self.root.winfo_screenheight() - self.indicator.winfo_height() - 112
         self.indicator.geometry(f"+{x}+{y}")
 
     def draw_indicator(self):
         self.indicator_after_id = None
         self.indicator_canvas.delete("all")
-        color = COLORS["danger"] if self.indicator_state == "recording" else COLORS["warning"]
-        if self.indicator_state == "recording":
-            heights = [10, 18, 26, 18, 10]
-            shift = self.indicator_phase % 4
-            for index, height in enumerate(heights):
-                animated_height = max(7, height - abs((index + shift) % 5 - 2) * 3)
-                x = 3 + index * 7
-                self.indicator_canvas.create_line(x, 17 - animated_height // 2, x, 17 + animated_height // 2, fill=color, width=4)
-            if not self.reduce_motion:
-                self.indicator_phase += 1
-                self.indicator_after_id = self.root.after(180, self.draw_indicator)
-        else:
-            self.indicator_canvas.create_oval(7, 7, 27, 27, fill=color, outline="")
-            self.indicator_canvas.create_arc(10, 10, 24, 24, start=40, extent=275, outline=COLORS["indicator"], width=2)
+        pulse = (math.sin(self.indicator_phase) + 1) / 2
+        outer_radius = 18 + int(pulse * 3)
+        center = 23
+        self.indicator_canvas.create_oval(
+            center - outer_radius, center - outer_radius, center + outer_radius, center + outer_radius,
+            outline=COLORS["indicator_glow"], width=2,
+        )
+        self.indicator_canvas.create_arc(
+            7, 7, 39, 39, start=int(self.indicator_phase * 38), extent=120,
+            outline=COLORS["indicator_accent"], width=2,
+        )
+        core_radius = 8 + int(pulse * 2)
+        self.indicator_canvas.create_oval(
+            center - core_radius, center - core_radius, center + core_radius, center + core_radius,
+            fill=COLORS["indicator_accent"], outline="",
+        )
+        self.indicator_canvas.create_oval(21, 21, 25, 25, fill=COLORS["indicator"], outline="")
+        if not self.reduce_motion:
+            self.indicator_phase += 0.14
+            self.indicator_after_id = self.root.after(40, self.draw_indicator)
 
     def hide_indicator(self):
         if self.indicator_after_id:
