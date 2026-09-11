@@ -43,7 +43,7 @@ def get_latest_release():
             releases = json.load(response)
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            raise UpdateError("Updates are unavailable until this GitHub repository and a release are publicly accessible.") from error
+            raise UpdateError("No public release was found. Publish WhisperLive.exe in GitHub Releases so installed apps can download updates.") from error
         raise UpdateError(f"Could not reach GitHub: {error}") from error
     except OSError as error:
         raise UpdateError(f"Could not reach GitHub: {error}") from error

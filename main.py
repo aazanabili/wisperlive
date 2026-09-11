@@ -11,7 +11,7 @@ import winreg
 import keyboard
 import pystray
 import winsound
-from PIL import Image
+from PIL import Image, ImageTk
 
 from audio_recorder import AudioRecorder
 from auto_typer import paste_text
@@ -64,6 +64,8 @@ class WhisperLiveApp:
         COLORS.update(THEMES.get(self.config.get("theme"), THEMES["dark"]))
         self.root.configure(bg=COLORS["background"])
         self.root.iconbitmap(resource_path("assets/whisperlive.ico"))
+        self.window_icon = ImageTk.PhotoImage(Image.open(resource_path("assets/whisperlive.png")))
+        self.root.iconphoto(True, self.window_icon)
         self.recorder = AudioRecorder()
         self.is_processing = False
         self.is_exiting = False

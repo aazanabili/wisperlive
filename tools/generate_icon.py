@@ -21,17 +21,18 @@ def main():
     image = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    draw.ellipse(box(12, 12, 244, 244), fill="#173C78")
-    draw.ellipse(box(20, 20, 236, 236), fill="#2868C7")
-    draw.ellipse(box(31, 31, 225, 225), fill="#3B82F6")
+    draw.ellipse(box(12, 12, 244, 244), fill="#123B78")
+    draw.ellipse(box(22, 22, 234, 234), fill="#2563C7")
+    draw.ellipse(box(33, 33, 223, 223), fill="#3B82F6")
 
-    # A microphone at the center and two speech-wave arcs keep the mark legible at small sizes.
-    draw.rounded_rectangle(box(103, 62, 153, 150), radius=scale(25), fill="#F7FBFF")
-    draw.arc(box(75, 101, 181, 188), start=0, end=180, fill="#F7FBFF", width=scale(12))
-    draw.line((scale(128), scale(188), scale(128), scale(209)), fill="#F7FBFF", width=scale(12))
-    draw.line((scale(99), scale(209), scale(157), scale(209)), fill="#F7FBFF", width=scale(12))
-    draw.arc(box(38, 74, 218, 181), start=302, end=58, fill="#BFE0FF", width=scale(10))
-    draw.arc(box(53, 86, 203, 169), start=304, end=56, fill="#BFE0FF", width=scale(8))
+    # The broad microphone silhouette remains clear at Windows' 16 px icon size.
+    draw.rounded_rectangle(box(101, 60, 155, 151), radius=scale(27), fill="#F7FBFF")
+    draw.arc(box(72, 100, 184, 190), start=0, end=180, fill="#F7FBFF", width=scale(13))
+    draw.line((scale(128), scale(190), scale(128), scale(211)), fill="#F7FBFF", width=scale(13))
+    draw.line((scale(96), scale(211), scale(160), scale(211)), fill="#F7FBFF", width=scale(13))
+    draw.ellipse(box(179, 67, 193, 81), fill="#BFE0FF")
+    draw.ellipse(box(198, 84, 208, 94), fill="#BFE0FF")
+    draw.ellipse(box(211, 105, 218, 112), fill="#BFE0FF")
 
     png_path = ASSETS / "whisperlive.png"
     icon_path = ASSETS / "whisperlive.ico"
