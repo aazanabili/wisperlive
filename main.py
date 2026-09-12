@@ -8,7 +8,6 @@ from tkinter import ttk
 import webbrowser
 import winreg
 
-import keyboard
 import pystray
 import winsound
 from PIL import Image, ImageTk
@@ -19,6 +18,7 @@ from config_manager import load_config, save_config
 from gemini_api import process_audio
 from updater import RELEASES_PAGE
 from version import APP_VERSION
+from windows_hotkey import WindowsGlobalHotkey
 
 
 THEMES = {
@@ -70,7 +70,8 @@ class WhisperLiveApp:
         self.recorder = AudioRecorder()
         self.is_processing = False
         self.is_exiting = False
-        self.hotkey_handles = []
+        self.hotkey = None
+        self.hold_poll_after_id = None
         self.indicator_after_id = None
         self.indicator_phase = 0
         self.indicator_state = None
@@ -403,35 +404,38 @@ class WhisperLiveApp:
             return False
 
     def setup_hotkeys(self):
+        self.clear_hotkeys()
         shortcut = self.config.get("shortcut", "ctrl+space")
         try:
             if self.config.get("mode") == "toggle":
-                handle = keyboard.add_hotkey(shortcut, lambda: self.root.after(0, self.toggle_recording), suppress=True)
-                self.hotkey_handles.append(("hotkey", handle))
+                callback = lambda: self.root.after(0, self.toggle_recording)
             else:
-                main_key = shortcut.split("+")[-1].strip()
-                press_handle = keyboard.on_press_key(main_key, self.on_key_press, suppress=False)
-                release_handle = keyboard.on_release_key(main_key, self.on_key_release, suppress=False)
-                self.hotkey_handles.extend([("hook", press_handle), ("hook", release_handle)])
+                callback = lambda: self.root.after(0, self.start_hold_recording)
+            self.hotkey = WindowsGlobalHotkey(shortcut, callback)
+            self.hotkey.start()
         except Exception as error:
+            self.hotkey = None
             self.set_status(f"Shortcut error: {error}", "error")
 
     def clear_hotkeys(self):
-        for kind, handle in self.hotkey_handles:
-            if kind == "hotkey":
-                keyboard.remove_hotkey(handle)
-            else:
-                keyboard.unhook(handle)
-        self.hotkey_handles.clear()
+        if self.hold_poll_after_id:
+            self.root.after_cancel(self.hold_poll_after_id)
+            self.hold_poll_after_id = None
+        if self.hotkey:
+            self.hotkey.stop()
+            self.hotkey = None
 
-    def on_key_press(self, _event):
-        parts = [part.strip().lower() for part in self.config.get("shortcut", "").split("+")]
-        modifiers = [part for part in parts if part in ["ctrl", "shift", "alt", "windows"]]
-        if all(keyboard.is_pressed(modifier) for modifier in modifiers):
-            self.root.after(0, self.start_recording)
+    def start_hold_recording(self):
+        self.start_recording()
+        if self.recorder.is_recording:
+            self.poll_hold_shortcut()
 
-    def on_key_release(self, _event):
-        self.root.after(0, self.stop_and_process)
+    def poll_hold_shortcut(self):
+        self.hold_poll_after_id = None
+        if self.hotkey and self.hotkey.is_main_key_pressed():
+            self.hold_poll_after_id = self.root.after(20, self.poll_hold_shortcut)
+        else:
+            self.stop_and_process()
 
     def toggle_recording(self):
         if self.is_processing:
