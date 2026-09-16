@@ -8,6 +8,7 @@ environment after importing this module.
 import base64
 import ctypes
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -28,6 +29,9 @@ DEFAULT_CONFIG = {
     "theme": "dark",
     "installed_release_tag": "",
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 class _DATA_BLOB(ctypes.Structure):
@@ -91,15 +95,21 @@ def _protect_api_key(value):
 
 def _unprotect_api_key(value):
     if not isinstance(value, str):
+        logger.warning("Stored API key has an invalid protected value; ignoring it")
         return ""
     try:
         if value.startswith("dpapi:"):
             plain = _windows_dpapi(False, base64.b64decode(value[6:], validate=True))
-            return plain.decode("utf-8") if plain is not None else ""
+            if plain is None:
+                logger.warning("Unable to decrypt stored API key with Windows DPAPI; ignoring it")
+                return ""
+            return plain.decode("utf-8")
         if value.startswith("base64:"):
             return base64.b64decode(value[7:], validate=True).decode("utf-8")
-    except (ValueError, TypeError, UnicodeError):
-        pass
+    except (ValueError, TypeError, UnicodeError, RuntimeError):
+        logger.warning("Unable to decode stored API key; ignoring it")
+    else:
+        logger.warning("Stored API key uses an unknown protection format; ignoring it")
     return ""
 
 
@@ -201,7 +211,8 @@ def load_config():
             # successful read so merely loading the app removes plaintext
             # secrets from disk (and remains safe if saving fails).
             if "api_key" in raw_config and "api_key_protected" not in raw_config:
-                save_config(config)
+                if not save_config(config):
+                    logger.warning("Could not rewrite the legacy plaintext API key configuration")
             return config
         for legacy in _legacy_paths():
             if legacy.exists():
@@ -209,15 +220,27 @@ def load_config():
                     config = _normalized(_read(legacy))
                 except (OSError, ValueError, TypeError, json.JSONDecodeError):
                     continue
-                if not _atomic_write(target, config, no_overwrite=True):
+                try:
+                    migrated = _atomic_write(target, config, no_overwrite=True)
+                except (OSError, TypeError, ValueError, RuntimeError):
+                    # Leave the legacy source untouched.  In particular, a
+                    # failed DPAPI operation must not produce a plaintext
+                    # target or escape as an unhandled startup exception.
+                    logger.warning("Could not migrate the legacy configuration; keeping the legacy file")
+                    return config
+                if not migrated:
                     # Another process may have completed migration first.
                     # Prefer the canonical file rather than returning the
                     # lower-priority legacy value.
                     if target.exists():
-                        return _normalized(_read(target))
+                        try:
+                            return _normalized(_read(target))
+                        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                            logger.warning("Could not read the concurrently migrated configuration")
                 return config
         config = DEFAULT_CONFIG.copy()
-        save_config(config)
+        if not save_config(config):
+            logger.warning("Could not create the default configuration")
         return config
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return DEFAULT_CONFIG.copy()
