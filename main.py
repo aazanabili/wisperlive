@@ -373,26 +373,59 @@ class WhisperLiveApp:
         return "break"
 
     def save_and_apply(self):
+        previous_startup = self.config.get("run_at_startup", False)
         self.clear_hotkeys()
         self.collect_form_values()
-        if not self.set_startup_registration(self.config["run_at_startup"]):
-            self.config["run_at_startup"] = False
-            self.run_at_startup_var.set(False)
-            startup_message = " Changes saved, but Windows startup could not be updated."
-        else:
-            startup_message = ""
-        save_config(self.config)
+        requested_startup = self.config["run_at_startup"]
+
+        # Update Windows first, then persist the matching configuration.  This
+        # keeps the checkbox, config file, and Run key from claiming different
+        # states when either operation fails.
+        registry_ok = self.set_startup_registration(requested_startup)
+        if not registry_ok:
+            self.config["run_at_startup"] = previous_startup
+            self.run_at_startup_var.set(previous_startup)
+
+        try:
+            saved = bool(save_config(self.config))
+        except Exception:
+            saved = False
+
+        rollback_ok = True
+        if registry_ok and not saved:
+            rollback_ok = self.set_startup_registration(previous_startup)
+            if rollback_ok:
+                self.config["run_at_startup"] = previous_startup
+                self.run_at_startup_var.set(previous_startup)
+
         self.setup_hotkeys()
-        self.set_status(f"Changes saved. Your shortcut is ready.{startup_message}", "ready")
+        if saved and registry_ok:
+            message = "Changes saved. Your shortcut is ready."
+            state = "ready"
+        elif saved:
+            message = "Changes saved. Windows startup could not be updated; the startup setting was not changed."
+            state = "error"
+        elif registry_ok and rollback_ok:
+            message = "Changes could not be saved. Windows startup was restored."
+            state = "error"
+        elif registry_ok:
+            message = "Changes could not be saved, and Windows startup could not be restored."
+            state = "error"
+        else:
+            message = "Changes could not be saved. Windows startup could not be updated."
+            state = "error"
+        self.set_status(message, state)
 
     def set_startup_registration(self, enabled):
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY, 0, winreg.KEY_SET_VALUE) as key:
                 if enabled:
+                    executable = os.path.abspath(sys.executable)
                     if getattr(sys, "frozen", False):
-                        command = f'"{sys.executable}"'
+                        command = f'"{executable}"'
                     else:
-                        command = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+                        script = os.path.abspath(__file__)
+                        command = f'"{executable}" "{script}"'
                     winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)
                 else:
                     try:

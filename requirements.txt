@@ -17,7 +17,8 @@ grpcio-status==1.71.2
 httplib2==0.32.0
 idna==3.19
 keyboard==0.13.5
-numpy==2.5.3
+# NumPy 2.5.x requires Python >=3.12; 2.4.6 is the newest release supporting Python 3.11.
+numpy==2.4.6
 packaging==26.3
 pefile==2024.8.26
 proto-plus==1.28.2
