@@ -376,23 +376,29 @@ class WhisperLiveApp:
         self.clear_hotkeys()
         self.collect_form_values()
         if not self.set_startup_registration(self.config["run_at_startup"]):
-            self.config["run_at_startup"] = False
-            self.run_at_startup_var.set(False)
             startup_message = " Changes saved, but Windows startup could not be updated."
         else:
             startup_message = ""
-        save_config(self.config)
+        saved = save_config(self.config)
         self.setup_hotkeys()
-        self.set_status(f"Changes saved. Your shortcut is ready.{startup_message}", "ready")
+        if saved:
+            message = f"Changes saved. Your shortcut is ready.{startup_message}"
+            state = "ready"
+        else:
+            message = "Changes could not be saved. Your shortcut is ready."
+            state = "error"
+        self.set_status(message, state)
 
     def set_startup_registration(self, enabled):
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY, 0, winreg.KEY_SET_VALUE) as key:
                 if enabled:
+                    executable = os.path.abspath(sys.executable)
                     if getattr(sys, "frozen", False):
-                        command = f'"{sys.executable}"'
+                        command = f'"{executable}"'
                     else:
-                        command = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+                        script = os.path.abspath(__file__)
+                        command = f'"{executable}" "{script}"'
                     winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)
                 else:
                     try:
