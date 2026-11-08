@@ -126,12 +126,13 @@ jobs:
         NFPM_URL="https://github.com/goreleaser/nfpm/releases/download/v2.48.0/nfpm_2.48.0_Linux_x86_64.tar.gz"
         EXPECTED_SHA256="6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750"
         for attempt in 1 2 3; do
-          curl --fail --location --retry 3 --retry-delay 2 --show-error --silent -o nfpm.tar.gz "$NFPM_URL"
-          if echo "$EXPECTED_SHA256  nfpm.tar.gz" | sha256sum -c -; then
-            break
+          if curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o nfpm.tar.gz "$NFPM_URL"; then
+            if echo "$EXPECTED_SHA256  nfpm.tar.gz" | sha256sum -c -; then
+              break
+            fi
           fi
           if [ "$attempt" -eq 3 ]; then
-            echo "nfpm checksum mismatch after $attempt attempts"
+            echo "nfpm download failed or checksum mismatch after $attempt attempts"
             exit 1
           fi
           rm -f nfpm.tar.gz
@@ -147,7 +148,7 @@ jobs:
 
     - name: Build AppImage
       run: |
-        curl -sSL -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
+        curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
         echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool" | sha256sum -c -
         chmod +x appimagetool
         mkdir -p AppDir/usr/bin
