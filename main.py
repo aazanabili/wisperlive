@@ -26,6 +26,7 @@ from audio_recorder import AudioRecorder
 from auto_typer import paste_text
 from config_manager import load_config, save_config
 from llm_api import LLMError, NO_TRANSLATION, fetch_models, process_audio
+from single_instance import ALREADY_RUNNING_MESSAGE, acquire_instance_lock
 from updater import RELEASES_PAGE
 from version import APP_VERSION
 from windows_hotkey import WindowsGlobalHotkey
@@ -40,6 +41,37 @@ def _log_thread_exception(args):
         getattr(args.thread, "name", "?"),
         exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
     )
+
+
+def _notify_already_running():
+    """Explain why the app is not starting: terminal output plus a GUI dialog."""
+    print(ALREADY_RUNNING_MESSAGE, file=sys.stderr)
+    if tk is None:
+        return
+    try:
+        from tkinter import messagebox
+        dialog = tk.Tk()
+        dialog.withdraw()
+        messagebox.showerror("WhisperLive", ALREADY_RUNNING_MESSAGE, master=dialog)
+        dialog.destroy()
+    except Exception:
+        logger.warning("Could not display the single-instance dialog", exc_info=True)
+
+
+def _acquire_single_instance_lock_or_exit():
+    """Keep a single running instance per user session (see issue #14).
+
+    Returns the held lock, or exits with code 1 after notifying the user.
+    """
+    try:
+        lock = acquire_instance_lock()
+    except OSError as exc:
+        print(f"Could not acquire the single-instance lock: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    if lock is None:
+        _notify_already_running()
+        raise SystemExit(1)
+    return lock
 
 
 THEMES = {
@@ -895,6 +927,8 @@ if __name__ == "__main__":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
         # Notify Explorer that the executable's multi-size icon has changed, including List view's 16 px cache.
         ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
+    instance_lock = _acquire_single_instance_lock_or_exit()
     root = tk.Tk()
     app = WhisperLiveApp(root)
     root.mainloop()
+    instance_lock.release()
