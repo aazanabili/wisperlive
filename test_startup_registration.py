@@ -1,11 +1,14 @@
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import main
 
 
+@unittest.skipUnless(sys.platform == "win32", "Windows registry startup registration")
 class StartupRegistrationTests(unittest.TestCase):
     def setUp(self):
         self.app = main.WhisperLiveApp.__new__(main.WhisperLiveApp)
@@ -98,7 +101,7 @@ class SaveAndApplyTests(unittest.TestCase):
         save.assert_called_once_with({"run_at_startup": False, "shortcut": "ctrl+space", "api_key": "new"})
         self.assertFalse(self.app.config["run_at_startup"])
         self.app.set_status.assert_called_once_with(
-            "Changes saved. Windows startup could not be updated; the startup setting was not changed.", "error"
+            "Changes saved. Startup registration could not be updated; the startup setting was not changed.", "error"
         )
 
     def test_save_failure_rolls_registry_back(self):
@@ -110,7 +113,7 @@ class SaveAndApplyTests(unittest.TestCase):
         self.assertEqual(registry.call_args_list, [mock.call(True), mock.call(False)])
         self.assertFalse(self.app.config["run_at_startup"])
         self.app.set_status.assert_called_once_with(
-            "Changes could not be saved. Windows startup was restored.", "error"
+            "Changes could not be saved. Startup registration was restored.", "error"
         )
 
     def test_save_failure_reports_failed_rollback(self):
@@ -120,7 +123,7 @@ class SaveAndApplyTests(unittest.TestCase):
             self.app.save_and_apply()
 
         self.app.set_status.assert_called_once_with(
-            "Changes could not be saved, and Windows startup could not be restored.", "error"
+            "Changes could not be saved, and startup registration could not be restored.", "error"
         )
 
     def test_success_persists_matching_startup_state(self):
@@ -133,6 +136,68 @@ class SaveAndApplyTests(unittest.TestCase):
         save.assert_called_once_with(self.app.config)
         self.assertTrue(self.app.config["run_at_startup"])
         self.app.set_status.assert_called_once_with("Changes saved. Your shortcut is ready.", "ready")
+
+
+@unittest.skipIf(sys.platform == "win32", "XDG autostart startup registration")
+class LinuxStartupRegistrationTests(unittest.TestCase):
+    def setUp(self):
+        self.app = main.WhisperLiveApp.__new__(main.WhisperLiveApp)
+
+    def _autostart_dir(self):
+        return Path(os.environ["XDG_CONFIG_HOME"]) / "autostart"
+
+    def test_enable_writes_desktop_file_with_quoted_command(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": root}), \
+                mock.patch.object(sys, "executable", "/opt/Whisper Live/whisperlive"), \
+                mock.patch.object(main, "__file__", "/opt/Whisper Live/main.py"):
+            self.assertTrue(self.app.set_startup_registration(True))
+
+            desktop_file = self._autostart_dir() / "WhisperLive.desktop"
+            content = desktop_file.read_text(encoding="utf-8")
+            self.assertIn("[Desktop Entry]", content)
+            self.assertIn("Type=Application", content)
+            self.assertIn("Name=WhisperLive", content)
+            self.assertIn(f"Exec={main.WhisperLiveApp.startup_command()}", content)
+            self.assertIn('Exec="/opt/Whisper Live/whisperlive" "/opt/Whisper Live/main.py"', content)
+            self.assertIn("Terminal=false", content)
+            self.assertTrue(content.endswith("\n"))
+
+    def test_enable_frozen_app_uses_executable_only(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": root}), \
+                mock.patch.object(sys, "executable", "/opt/whisperlive/whisperlive"), \
+                mock.patch.object(sys, "frozen", True, create=True):
+            self.assertTrue(self.app.set_startup_registration(True))
+
+            content = self._autostart_dir().joinpath("WhisperLive.desktop").read_text(encoding="utf-8")
+            self.assertIn('Exec="/opt/whisperlive/whisperlive"', content)
+            self.assertNotIn("main.py", content)
+
+    def test_enable_without_xdg_config_home_uses_dot_config(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.dict(os.environ, {"HOME": root}, clear=False):
+            os.environ.pop("XDG_CONFIG_HOME", None)
+            self.assertTrue(self.app.set_startup_registration(True))
+            self.assertTrue((Path(root) / ".config" / "autostart" / "WhisperLive.desktop").exists())
+
+    def test_disable_removes_desktop_file_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": root}):
+            self.assertTrue(self.app.set_startup_registration(True))
+            desktop_file = self._autostart_dir() / "WhisperLive.desktop"
+            self.assertTrue(desktop_file.exists())
+
+            self.assertTrue(self.app.set_startup_registration(False))
+            self.assertFalse(desktop_file.exists())
+            self.assertTrue(self.app.set_startup_registration(False))
+
+    def test_reports_failure_without_claiming_success(self):
+        with tempfile.TemporaryDirectory() as root:
+            blocked = Path(root) / "not-a-directory"
+            blocked.write_text("file, not a directory", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(blocked)}):
+                self.assertFalse(self.app.set_startup_registration(True))
 
 
 if __name__ == "__main__":

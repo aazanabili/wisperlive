@@ -18,6 +18,12 @@ from pathlib import Path
 CONFIG_FILE = "config.json"  # legacy basename (and the name used by callers)
 CONFIG_SUBDIR = "WhisperLive"
 
+# Captured once at import: unlike the environment lookups below, the running
+# platform never changes.  Tests patch this flag instead of ``os.name`` so
+# they can exercise the Windows branches without breaking ``pathlib`` (which
+# reads ``os.name`` globally when constructing paths).
+_IS_WINDOWS = os.name == "nt"
+
 DEFAULT_CONFIG = {
     "api_key": "",
     "target_language": "English",
@@ -40,7 +46,7 @@ class _DATA_BLOB(ctypes.Structure):
 
 def _windows_dpapi(protect, value):
     """Call user-scoped DPAPI, returning None rather than leaking exceptions."""
-    if os.name != "nt":
+    if not _IS_WINDOWS:
         return None
     try:
         crypt = ctypes.windll.crypt32
@@ -84,7 +90,7 @@ def _protect_api_key(value):
     protected = _windows_dpapi(True, value)
     if protected is not None:
         return "dpapi:" + base64.b64encode(protected).decode("ascii")
-    if os.name == "nt":
+    if _IS_WINDOWS:
         # Never downgrade a Windows user's secret to plaintext (or a
         # reversible encoding) when DPAPI is unavailable.
         raise RuntimeError("Windows DPAPI is unavailable")
@@ -114,10 +120,17 @@ def _unprotect_api_key(value):
 
 
 def _config_directory():
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / CONFIG_SUBDIR
-    return Path.home() / "AppData" / "Local" / CONFIG_SUBDIR
+    if _IS_WINDOWS:
+        base = os.environ.get("LOCALAPPDATA")
+        if not base:
+            return Path.home() / "AppData" / "Local" / CONFIG_SUBDIR
+    else:
+        # Follow the XDG Base Directory Specification on Linux and other
+        # POSIX systems.
+        base = os.environ.get("XDG_CONFIG_HOME")
+        if not base:
+            return Path.home() / ".config" / CONFIG_SUBDIR
+    return Path(base) / CONFIG_SUBDIR
 
 
 def get_config_path():

@@ -3,14 +3,22 @@ import math
 import os
 import sys
 import threading
-import tkinter as tk
-from tkinter import ttk
 import webbrowser
-import winreg
+from pathlib import Path
 
-import pystray
-import winsound
-from PIL import Image, ImageTk
+try:
+    import tkinter as tk
+    from tkinter import ttk
+except ImportError:  # tkinter is only required to run the app, not to import it
+    tk = None
+    ttk = None
+
+if os.name == "nt":
+    import winreg
+    import winsound
+else:
+    winreg = None
+    winsound = None
 
 from audio_recorder import AudioRecorder
 from auto_typer import paste_text
@@ -53,6 +61,13 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+def _linux_autostart_dir():
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if not base:
+        base = os.path.join(os.path.expanduser("~"), ".config")
+    return Path(base) / "autostart"
+
+
 class WhisperLiveApp:
     def __init__(self, root):
         self.root = root
@@ -64,9 +79,17 @@ class WhisperLiveApp:
         COLORS.clear()
         COLORS.update(THEMES.get(self.config.get("theme"), THEMES["dark"]))
         self.root.configure(bg=COLORS["background"])
-        self.root.iconbitmap(resource_path("assets/whisperlive.ico"))
-        self.window_icon = ImageTk.PhotoImage(Image.open(resource_path("assets/whisperlive.png")))
-        self.root.iconphoto(True, self.window_icon)
+        if os.name == "nt":
+            self.root.iconbitmap(resource_path("assets/whisperlive.ico"))
+        self.window_icon = None
+        try:
+            from PIL import Image, ImageTk
+            self.window_icon = ImageTk.PhotoImage(Image.open(resource_path("assets/whisperlive.png")))
+            self.root.iconphoto(True, self.window_icon)
+        except Exception:
+            # The window icon is cosmetic; missing Pillow or a picky window
+            # manager must not stop the app from starting.
+            self.window_icon = None
         self.recorder = AudioRecorder()
         self.is_processing = False
         self.is_exiting = False
@@ -378,9 +401,9 @@ class WhisperLiveApp:
         self.collect_form_values()
         requested_startup = self.config["run_at_startup"]
 
-        # Update Windows first, then persist the matching configuration.  This
-        # keeps the checkbox, config file, and Run key from claiming different
-        # states when either operation fails.
+        # Update startup registration first, then persist the matching
+        # configuration.  This keeps the checkbox, config file, and startup
+        # entry from claiming different states when either operation fails.
         registry_ok = self.set_startup_registration(requested_startup)
         if not registry_ok:
             self.config["run_at_startup"] = previous_startup
@@ -403,35 +426,67 @@ class WhisperLiveApp:
             message = "Changes saved. Your shortcut is ready."
             state = "ready"
         elif saved:
-            message = "Changes saved. Windows startup could not be updated; the startup setting was not changed."
+            message = "Changes saved. Startup registration could not be updated; the startup setting was not changed."
             state = "error"
         elif registry_ok and rollback_ok:
-            message = "Changes could not be saved. Windows startup was restored."
+            message = "Changes could not be saved. Startup registration was restored."
             state = "error"
         elif registry_ok:
-            message = "Changes could not be saved, and Windows startup could not be restored."
+            message = "Changes could not be saved, and startup registration could not be restored."
             state = "error"
         else:
-            message = "Changes could not be saved. Windows startup could not be updated."
+            message = "Changes could not be saved. Startup registration could not be updated."
             state = "error"
         self.set_status(message, state)
 
+    @staticmethod
+    def startup_command():
+        executable = os.path.abspath(sys.executable)
+        if getattr(sys, "frozen", False):
+            return f'"{executable}"'
+        script = os.path.abspath(__file__)
+        return f'"{executable}" "{script}"'
+
     def set_startup_registration(self, enabled):
+        if os.name != "nt":
+            return self.set_linux_startup_registration(enabled)
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY, 0, winreg.KEY_SET_VALUE) as key:
                 if enabled:
-                    executable = os.path.abspath(sys.executable)
-                    if getattr(sys, "frozen", False):
-                        command = f'"{executable}"'
-                    else:
-                        script = os.path.abspath(__file__)
-                        command = f'"{executable}" "{script}"'
-                    winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)
+                    winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, self.startup_command())
                 else:
                     try:
                         winreg.DeleteValue(key, APP_NAME)
                     except FileNotFoundError:
                         pass
+            return True
+        except OSError:
+            return False
+
+    def set_linux_startup_registration(self, enabled):
+        """Manage the XDG autostart entry, the Linux equivalent of the Run key."""
+        autostart_dir = _linux_autostart_dir()
+        desktop_file = autostart_dir / f"{APP_NAME}.desktop"
+        try:
+            if enabled:
+                autostart_dir.mkdir(parents=True, exist_ok=True)
+                desktop_file.write_text(
+                    "\n".join([
+                        "[Desktop Entry]",
+                        "Type=Application",
+                        f"Name={APP_NAME}",
+                        f"Exec={self.startup_command()}",
+                        "Terminal=false",
+                        "X-GNOME-Autostart-enabled=true",
+                        "",
+                    ]),
+                    encoding="utf-8",
+                )
+            else:
+                try:
+                    desktop_file.unlink()
+                except FileNotFoundError:
+                    pass
             return True
         except OSError:
             return False
@@ -444,7 +499,12 @@ class WhisperLiveApp:
                 callback = lambda: self.root.after(0, self.toggle_recording)
             else:
                 callback = lambda: self.root.after(0, self.start_hold_recording)
-            self.hotkey = WindowsGlobalHotkey(shortcut, callback)
+            if os.name == "nt":
+                hotkey_class = WindowsGlobalHotkey
+            else:
+                from linux_hotkey import LinuxGlobalHotkey
+                hotkey_class = LinuxGlobalHotkey
+            self.hotkey = hotkey_class(shortcut, callback)
             self.hotkey.start()
         except Exception as error:
             self.hotkey = None
@@ -478,14 +538,22 @@ class WhisperLiveApp:
         else:
             self.start_recording()
 
+    def beep(self, frequency, duration_ms):
+        if winsound is not None:
+            winsound.Beep(frequency, duration_ms)
+        else:
+            # The Tk bell is the closest portable equivalent on Linux and,
+            # unlike winsound.Beep, is scheduled on the UI thread.
+            self.root.after(0, self.root.bell)
+
     def start_recording(self):
         if self.recorder.is_recording or self.is_processing:
             return
         if not self.config.get("api_key", "").strip():
             self.set_status("An API key is required before recording.", "error")
-            winsound.Beep(400, 300)
+            self.beep(400, 300)
             return
-        winsound.Beep(1000, 100)
+        self.beep(1000, 100)
         self.recorder.start_recording()
         self.set_status("Recording in progress. Press the shortcut to stop.", "recording")
         self.show_indicator("Recording", "Listening for your voice", "recording")
@@ -493,7 +561,7 @@ class WhisperLiveApp:
     def stop_and_process(self):
         if not self.recorder.is_recording:
             return
-        winsound.Beep(800, 100)
+        self.beep(800, 100)
         audio_file = self.recorder.stop_recording()
         self.is_processing = True
         self.set_status("Processing your recording...", "processing")
@@ -505,7 +573,7 @@ class WhisperLiveApp:
             text = process_audio(audio_file, self.config.get("target_language", "English"), self.config.get("api_key", "").strip())
             if text:
                 paste_text(text)
-                winsound.Beep(1200, 200)
+                self.beep(1200, 200)
             self.root.after(0, lambda: self.set_status("Done. Ready for the next recording.", "ready"))
         except Exception as error:
             message = f"Could not process recording: {error}"
@@ -533,6 +601,8 @@ class WhisperLiveApp:
 
     @staticmethod
     def prefers_reduced_motion():
+        if os.name != "nt":
+            return False
         animations_enabled = ctypes.c_int()
         try:
             # SPI_GETCLIENTAREAANIMATION reflects the Windows animation accessibility setting.
@@ -628,7 +698,16 @@ class WhisperLiveApp:
         self.indicator.withdraw()
 
     def create_tray_icon(self):
-        image = Image.open(resource_path("assets/whisperlive.png")).convert("RGBA")
+        self.tray_icon = None
+        try:
+            import pystray
+            from PIL import Image
+            image = Image.open(resource_path("assets/whisperlive.png")).convert("RGBA")
+        except Exception:
+            # Without a usable tray backend the app keeps running with a
+            # normal taskbar presence; hiding is disabled so the window
+            # cannot become unreachable.
+            return
         self.tray_icon = pystray.Icon(
             APP_NAME, image, APP_NAME,
             menu=pystray.Menu(
@@ -645,7 +724,7 @@ class WhisperLiveApp:
         self.root.after(0, self.quit_app)
 
     def on_window_unmap(self, _event):
-        if self.config.get("minimize_to_tray"):
+        if self.config.get("minimize_to_tray") and self.tray_icon:
             self.root.after_idle(self.hide_if_minimized)
 
     def hide_if_minimized(self):
@@ -662,7 +741,7 @@ class WhisperLiveApp:
         self.root.focus_force()
 
     def on_close(self):
-        if self.config.get("minimize_to_tray"):
+        if self.config.get("minimize_to_tray") and self.tray_icon:
             self.hide_window()
         else:
             self.quit_app()
@@ -671,14 +750,18 @@ class WhisperLiveApp:
         self.is_exiting = True
         self.clear_hotkeys()
         self.hide_indicator()
-        self.tray_icon.stop()
+        if self.tray_icon:
+            self.tray_icon.stop()
         self.root.destroy()
 
 
 if __name__ == "__main__":
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
-    # Notify Explorer that the executable's multi-size icon has changed, including List view's 16 px cache.
-    ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
+    if tk is None:
+        raise SystemExit("WhisperLive requires tkinter; install the python3-tk package.")
+    if os.name == "nt":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+        # Notify Explorer that the executable's multi-size icon has changed, including List view's 16 px cache.
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
     root = tk.Tk()
     app = WhisperLiveApp(root)
     root.mainloop()
