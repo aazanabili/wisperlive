@@ -25,7 +25,7 @@ else:
 from audio_recorder import AudioRecorder
 from auto_typer import paste_text
 from config_manager import load_config, save_config
-from llm_api import LLMError, fetch_models, process_audio
+from llm_api import LLMError, NO_TRANSLATION, fetch_models, process_audio
 from updater import RELEASES_PAGE
 from version import APP_VERSION
 from windows_hotkey import WindowsGlobalHotkey
@@ -187,7 +187,7 @@ class WhisperLiveApp:
         self.add_label(settings, "Output language")
         lang_combo = ttk.Combobox(
             settings, textvariable=self.lang_var,
-            values=["English", "العربية", "Français", "Español", "Deutsch", "中文", "日本語"],
+            values=["English", "العربية", "Français", "Español", "Deutsch", "中文", "日本語", NO_TRANSLATION],
             state="readonly", style="Dark.TCombobox",
         )
         lang_combo.pack(fill=tk.X, pady=(0, 10))
