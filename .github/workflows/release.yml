@@ -123,7 +123,7 @@ jobs:
 
     - name: Install nfpm
       run: |
-        curl -sSL -o nfpm.tar.gz "https://github.com/goreleaser/nfpm/releases/download/v2.48.0/nfpm_2.48.0_Linux_x86_64.tar.gz"
+        curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o nfpm.tar.gz "https://github.com/goreleaser/nfpm/releases/download/v2.48.0/nfpm_2.48.0_Linux_x86_64.tar.gz"
         echo "6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750  nfpm.tar.gz" | sha256sum -c -
         tar -xzf nfpm.tar.gz nfpm
 
@@ -135,7 +135,7 @@ jobs:
 
     - name: Build AppImage
       run: |
-        curl -sSL -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
+        curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
         echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool" | sha256sum -c -
         chmod +x appimagetool
         mkdir -p AppDir/usr/bin
