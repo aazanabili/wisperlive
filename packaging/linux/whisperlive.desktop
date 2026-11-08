@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=WhisperLive
+GenericName=Voice typing
+Comment=Voice capture that stays out of your way
+Exec=whisperlive
+Icon=whisperlive
+Terminal=false
+Categories=Utility;Audio;
+Keywords=voice;dictation;speech;typing;transcription;
+StartupNotify=false

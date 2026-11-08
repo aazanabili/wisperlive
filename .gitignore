@@ -10,6 +10,7 @@ ENV/
 build/
 dist/
 main.spec
+packaging/portaudio/
 
 # Python caches
 __pycache__/

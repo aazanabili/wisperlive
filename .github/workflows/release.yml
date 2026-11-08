@@ -10,8 +10,28 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Run unit tests
+      run: python -m unittest discover -v
+
   build-windows:
     runs-on: windows-latest
+    needs: test
 
     steps:
     - name: Checkout repository
@@ -56,5 +76,95 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: dist/WhisperLive.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install system audio library
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libportaudio2
+        PA_PATH="$(dpkg -L libportaudio2 | grep -E 'libportaudio\.so\.2(\.[0-9]+)*$' | head -n1)"
+        mkdir -p packaging/portaudio
+        cp -L "$PA_PATH" packaging/portaudio/libportaudio.so.2
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Stamp release version
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        echo "APP_VERSION = '${{ github.ref_name }}'" > version.py
+
+    - name: Build binary with PyInstaller
+      run: |
+        pyinstaller -y WhisperLive.spec
+
+    - name: Stage package payload
+      run: |
+        mkdir -p dist-pkg
+        cp dist/WhisperLive dist-pkg/whisperlive
+        chmod 755 dist-pkg/whisperlive
+        echo "WHISPERLIVE_VERSION=$(python -c 'import version; print(version.APP_VERSION.lstrip("v"))')" >> "$GITHUB_ENV"
+
+    - name: Install nfpm
+      run: |
+        curl -sSL -o nfpm.tar.gz "https://github.com/goreleaser/nfpm/releases/download/v2.48.0/nfpm_2.48.0_Linux_x86_64.tar.gz"
+        echo "6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750  nfpm.tar.gz" | sha256sum -c -
+        tar -xzf nfpm.tar.gz nfpm
+
+    - name: Build deb, rpm and Arch Linux packages
+      run: |
+        ./nfpm package --config packaging/nfpm.yaml --packager deb --target dist-pkg/
+        ./nfpm package --config packaging/nfpm.yaml --packager rpm --target dist-pkg/
+        ./nfpm package --config packaging/nfpm.yaml --packager archlinux --target dist-pkg/
+
+    - name: Build AppImage
+      run: |
+        curl -sSL -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
+        echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool" | sha256sum -c -
+        chmod +x appimagetool
+        mkdir -p AppDir/usr/bin
+        cp dist-pkg/whisperlive AppDir/usr/bin/whisperlive
+        cp packaging/linux/whisperlive.desktop AppDir/whisperlive.desktop
+        cp assets/whisperlive.png AppDir/whisperlive.png
+        printf '#!/bin/sh\nexec "$(dirname "$0")/usr/bin/whisperlive" "$@"\n' > AppDir/AppRun
+        chmod +x AppDir/AppRun
+        ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir dist-pkg/WhisperLive-x86_64.AppImage
+
+    - name: Upload Artifact (For Manual Triggers)
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/upload-artifact@v4
+      with:
+        name: WhisperLive-Linux
+        path: |
+          dist-pkg/*.deb
+          dist-pkg/*.rpm
+          dist-pkg/*.pkg.tar.zst
+          dist-pkg/*.AppImage
+
+    - name: Create Release and Upload Asset
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          dist-pkg/*.deb
+          dist-pkg/*.rpm
+          dist-pkg/*.pkg.tar.zst
+          dist-pkg/*.AppImage
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

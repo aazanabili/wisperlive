@@ -19,7 +19,11 @@ class ConfigManagerTests(unittest.TestCase):
         self.cwd = self.root / "cwd"
         for directory in (self.local, self.source, self.exe, self.cwd):
             directory.mkdir()
-        self.env = patch.dict(os.environ, {"LOCALAPPDATA": str(self.local)}, clear=False)
+        self.env = patch.dict(
+            os.environ,
+            {"LOCALAPPDATA": str(self.local), "XDG_CONFIG_HOME": str(self.local)},
+            clear=False,
+        )
         self.env.start()
         self.paths = patch.object(config_manager, "__file__", str(self.source / "config_manager.py"))
         self.paths.start()
@@ -54,7 +58,7 @@ class ConfigManagerTests(unittest.TestCase):
             raw = value.encode("utf-8") if isinstance(value, str) else value
             return wrapped + raw if protect else raw[len(wrapped):]
 
-        with patch.object(config_manager.os, "name", "nt"), patch.object(
+        with patch.object(config_manager, "_IS_WINDOWS", True), patch.object(
             config_manager, "_windows_dpapi", side_effect=fake_dpapi
         ):
             config_manager.save_config({"api_key": "dpapi-secret"})
@@ -104,7 +108,7 @@ class ConfigManagerTests(unittest.TestCase):
     def test_legacy_migration_dpapi_failure_keeps_legacy_without_target(self):
         legacy = self.exe / "config.json"
         legacy.write_text(json.dumps({"api_key": "legacy-secret"}), encoding="utf-8")
-        with patch.object(config_manager.os, "name", "nt"), patch.object(
+        with patch.object(config_manager, "_IS_WINDOWS", True), patch.object(
             config_manager, "_windows_dpapi", return_value=None
         ), patch.object(config_manager.logger, "warning"):
             loaded = config_manager.load_config()

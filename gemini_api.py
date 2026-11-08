@@ -1,9 +1,8 @@
-import google.generativeai as genai
-
 def process_audio(audio_path, target_language, api_key):
     if not api_key:
         raise ValueError("API key is missing. Please enter your Gemini API key in the settings.")
 
+    import google.generativeai as genai
     genai.configure(api_key=api_key)
 
     print("Processing audio with Gemini...")

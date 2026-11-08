@@ -34,6 +34,8 @@ pyparsing==3.3.2
 pyperclip==1.11.0
 Pillow==11.3.0
 pystray==0.19.5
+# pystray's Linux tray backend imports Xlib.
+python-xlib==0.33; sys_platform == "linux"
 python-dotenv==1.2.3
 pywin32-ctypes==0.2.3
 requests==2.34.2

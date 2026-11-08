@@ -23,6 +23,9 @@ MODIFIERS = {
     "win": MOD_WIN,
 }
 
+# Modifier names accepted in shortcut strings; platform-independent.
+MODIFIER_NAMES = frozenset(MODIFIERS)
+
 VIRTUAL_KEYS = {
     "backspace": 0x08,
     "tab": 0x09,
@@ -77,16 +80,21 @@ class HotkeyError(ValueError):
     pass
 
 
-def parse_shortcut(shortcut):
+def parse_shortcut_parts(shortcut):
+    """Split a shortcut string into modifier names and one key name.
+
+    Platform-independent: the returned key name still has to be mapped to a
+    platform key code by the caller.
+    """
     parts = [part.strip().lower() for part in shortcut.split("+") if part.strip()]
     if not parts:
         raise HotkeyError("Enter a shortcut")
 
-    modifier_flags = 0
+    modifiers = []
     key_name = None
     for part in parts:
-        if part in MODIFIERS:
-            modifier_flags |= MODIFIERS[part]
+        if part in MODIFIER_NAMES:
+            modifiers.append(part)
         elif key_name is None:
             key_name = part
         else:
@@ -94,6 +102,14 @@ def parse_shortcut(shortcut):
 
     if key_name is None:
         raise HotkeyError("Add a non-modifier key to the shortcut")
+    return modifiers, key_name
+
+
+def parse_shortcut(shortcut):
+    modifiers, key_name = parse_shortcut_parts(shortcut)
+    modifier_flags = 0
+    for name in modifiers:
+        modifier_flags |= MODIFIERS[name]
 
     if len(key_name) == 1 and key_name.isascii() and key_name.isalnum():
         virtual_key = ord(key_name.upper())

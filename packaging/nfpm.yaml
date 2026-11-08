@@ -1,0 +1,25 @@
+# Linux packages: nfpm package --config packaging/nfpm.yaml --packager deb|rpm|archlinux
+# ${WHISPERLIVE_VERSION} is expanded from the environment (CI sets it from the
+# release tag without the leading "v").
+name: whisperlive
+arch: amd64
+platform: linux
+version: ${WHISPERLIVE_VERSION}
+section: utils
+priority: optional
+maintainer: Abdullatif Zanabili <info@zanabili.dev>
+description: |
+  WhisperLive records speech through a global shortcut, turns it into
+  polished text with Gemini, and pastes the result into the active
+  application.
+vendor: aazanabili
+homepage: https://github.com/aazanabili/wisperlive
+contents:
+  - src: ./dist/whisperlive
+    dst: /usr/bin/whisperlive
+    file_info:
+      mode: 0755
+  - src: ./packaging/linux/whisperlive.desktop
+    dst: /usr/share/applications/whisperlive.desktop
+  - src: ./assets/whisperlive.png
+    dst: /usr/share/icons/hicolor/256x256/apps/whisperlive.png
