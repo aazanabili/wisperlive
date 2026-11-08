@@ -26,6 +26,8 @@ _IS_WINDOWS = os.name == "nt"
 
 DEFAULT_CONFIG = {
     "api_key": "",
+    "provider_base_url": "",
+    "model": "",
     "target_language": "English",
     "shortcut": "ctrl+space",
     "mode": "toggle",
