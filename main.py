@@ -1,6 +1,8 @@
 import ctypes
+import logging
 import math
 import os
+import queue
 import sys
 import threading
 import webbrowser
@@ -23,10 +25,21 @@ else:
 from audio_recorder import AudioRecorder
 from auto_typer import paste_text
 from config_manager import load_config, save_config
-from gemini_api import process_audio
+from llm_api import LLMError, fetch_models, process_audio
 from updater import RELEASES_PAGE
 from version import APP_VERSION
 from windows_hotkey import WindowsGlobalHotkey
+
+logger = logging.getLogger(__name__)
+
+
+def _log_thread_exception(args):
+    """Visible diagnostics for worker-thread crashes without killing the app."""
+    logger.error(
+        "Uncaught exception in thread %r",
+        getattr(args.thread, "name", "?"),
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+    )
 
 
 THEMES = {
@@ -93,6 +106,9 @@ class WhisperLiveApp:
         self.recorder = AudioRecorder()
         self.is_processing = False
         self.is_exiting = False
+        self._ui_queue = queue.Queue()
+        self.root.after(50, self._drain_ui_queue)
+        self.root.report_callback_exception = self._log_callback_exception
         self.hotkey = None
         self.hold_poll_after_id = None
         self.indicator_after_id = None
@@ -152,6 +168,7 @@ class WhisperLiveApp:
             bg=COLORS["background"], fg=COLORS["muted"], font=("Segoe UI", 10),
         ).pack(anchor=tk.W, pady=(2, 0))
         self.create_button(header, "About", self.show_about, secondary=True).pack(side=tk.RIGHT, padx=(8, 0))
+        self.create_button(header, "Settings \u2699", self.show_settings, secondary=True).pack(side=tk.RIGHT, padx=(8, 0))
         theme_label = "Light mode" if self.config.get("theme") == "dark" else "Dark mode"
         self.create_button(header, theme_label, self.toggle_theme, secondary=True).pack(side=tk.RIGHT)
 
@@ -165,19 +182,6 @@ class WhisperLiveApp:
         settings = tk.Frame(container, bg=COLORS["surface"], highlightbackground=COLORS["border"],
                             highlightthickness=1, padx=18, pady=12)
         settings.pack(fill=tk.X)
-
-        self.api_key_var = tk.StringVar(value=self.config.get("api_key", ""))
-        self.add_label(settings, "Gemini API key")
-        api_frame = tk.Frame(settings, bg=COLORS["surface"])
-        api_frame.pack(fill=tk.X, pady=(0, 5))
-        self.api_entry = self.create_entry(api_frame, self.api_key_var, show="*")
-        self.api_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.show_btn = self.create_button(api_frame, "Show", self.toggle_api_visibility, secondary=True)
-        self.show_btn.pack(side=tk.LEFT, padx=(8, 0))
-        tk.Label(
-            settings, text="Get a key from aistudio.google.com/app/apikey",
-            bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9),
-        ).pack(anchor=tk.W, pady=(0, 10))
 
         self.lang_var = tk.StringVar(value=self.config.get("target_language", "English"))
         self.add_label(settings, "Output language")
@@ -274,17 +278,133 @@ class WhisperLiveApp:
             activeforeground=COLORS["text"], font=("Segoe UI", 10),
         )
 
-    def toggle_api_visibility(self):
-        if self.api_entry.cget("show") == "*":
-            self.api_entry.config(show="")
-            self.show_btn.config(text="Hide")
-        else:
-            self.api_entry.config(show="*")
-            self.show_btn.config(text="Show")
+    def call_in_ui(self, callback):
+        """Run a callable on the Tk main thread.
+
+        Worker and hotkey threads must never touch Tk directly: calling
+        ``root.after`` from another thread can deadlock the Tcl interpreter
+        and freeze the whole application.
+        """
+        self._ui_queue.put(callback)
+
+    def _drain_ui_queue(self):
+        while True:
+            try:
+                callback = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                callback()
+            except Exception:
+                logger.exception("Unhandled error in a scheduled UI callback")
+        if not self.is_exiting:
+            self.root.after(50, self._drain_ui_queue)
+
+    def _log_callback_exception(self, exc, value, traceback):
+        logger.error("Uncaught exception in a Tk callback", exc_info=(exc, value, traceback))
+
+    def show_settings(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Settings \u2014 LLM provider")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.configure(bg=COLORS["surface"])
+        panel = tk.Frame(dialog, bg=COLORS["surface"], padx=26, pady=22)
+        panel.pack(fill=tk.BOTH, expand=True)
+
+        self.add_label(panel, "Provider Base URL")
+        base_var = tk.StringVar(value=self.config.get("provider_base_url", ""))
+        self.create_entry(panel, base_var).pack(fill=tk.X, pady=(0, 10))
+
+        self.add_label(panel, "API key")
+        key_row = tk.Frame(panel, bg=COLORS["surface"])
+        key_row.pack(fill=tk.X, pady=(0, 10))
+        key_var = tk.StringVar(value=self.config.get("api_key", ""))
+        key_entry = self.create_entry(key_row, key_var, show="*")
+        key_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        def toggle_key_visibility():
+            if key_entry.cget("show") == "*":
+                key_entry.config(show="")
+                show_btn.config(text="Hide")
+            else:
+                key_entry.config(show="*")
+                show_btn.config(text="Show")
+
+        show_btn = self.create_button(key_row, "Show", toggle_key_visibility, secondary=True)
+        show_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.add_label(panel, "Model")
+        model_row = tk.Frame(panel, bg=COLORS["surface"])
+        model_row.pack(fill=tk.X, pady=(0, 6))
+        model_var = tk.StringVar(value=self.config.get("model", ""))
+        model_combo = ttk.Combobox(model_row, textvariable=model_var, style="Dark.TCombobox")
+        model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        fetch_btn = self.create_button(model_row, "Fetch Models", lambda: start_fetch(), secondary=True)
+        fetch_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        status = tk.Label(panel, text="", bg=COLORS["surface"], fg=COLORS["muted"],
+                          font=("Segoe UI", 9), justify=tk.LEFT, wraplength=380)
+        status.pack(anchor=tk.W, pady=(0, 10))
+
+        def show_result(message, color):
+            try:
+                status.config(text=message, fg=color)
+                fetch_btn.config(state=tk.NORMAL)
+            except tk.TclError:
+                pass  # the dialog was closed while the fetch was running
+
+        def start_fetch():
+            base_url = base_var.get().strip()
+            api_key = key_var.get().strip()
+            fetch_btn.config(state=tk.DISABLED)
+            status.config(text="Fetching models...", fg=COLORS["muted"])
+
+            def worker():
+                try:
+                    models = fetch_models(base_url, api_key)
+                except LLMError as error:
+                    message = str(error)
+                    self.call_in_ui(lambda: show_result(message, COLORS["danger"]))
+                    return
+                except Exception:
+                    logger.exception("Unexpected error while fetching models")
+                    self.call_in_ui(lambda: show_result("Unexpected error while fetching models.", COLORS["danger"]))
+                    return
+
+                def apply_models():
+                    try:
+                        model_combo.configure(values=models)
+                        if models and not model_var.get().strip():
+                            model_var.set(models[0])
+                        show_result(f"{len(models)} model(s) available.", COLORS["success"])
+                    except tk.TclError:
+                        pass  # the dialog was closed while the fetch was running
+
+                self.call_in_ui(apply_models)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def save_settings():
+            self.config["provider_base_url"] = base_var.get().strip()
+            self.config["api_key"] = key_var.get().strip()
+            self.config["model"] = model_var.get().strip()
+            saved = save_config(self.config)
+            dialog.destroy()
+            if saved:
+                self.set_status("Provider settings saved. They apply to the next recording.", "ready")
+            else:
+                self.set_status("Provider settings could not be saved to disk.", "error")
+
+        buttons = tk.Frame(panel, bg=COLORS["surface"])
+        buttons.pack(fill=tk.X)
+        self.create_button(buttons, "Cancel", dialog.destroy, secondary=True).pack(side=tk.RIGHT)
+        self.create_button(buttons, "Save", lambda: save_settings()).pack(side=tk.RIGHT, padx=(0, 8))
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.grab_set()
 
     def collect_form_values(self):
         self.config.update({
-            "api_key": self.api_key_var.get().strip(),
             "target_language": self.lang_var.get(),
             "shortcut": self.shortcut_var.get().strip(),
             "mode": self.mode_var.get(),
@@ -496,9 +616,9 @@ class WhisperLiveApp:
         shortcut = self.config.get("shortcut", "ctrl+space")
         try:
             if self.config.get("mode") == "toggle":
-                callback = lambda: self.root.after(0, self.toggle_recording)
+                callback = lambda: self.call_in_ui(self.toggle_recording)
             else:
-                callback = lambda: self.root.after(0, self.start_hold_recording)
+                callback = lambda: self.call_in_ui(self.start_hold_recording)
             if os.name == "nt":
                 hotkey_class = WindowsGlobalHotkey
             else:
@@ -543,14 +663,14 @@ class WhisperLiveApp:
             winsound.Beep(frequency, duration_ms)
         else:
             # The Tk bell is the closest portable equivalent on Linux and,
-            # unlike winsound.Beep, is scheduled on the UI thread.
-            self.root.after(0, self.root.bell)
+            # unlike winsound.Beep, must be scheduled on the UI thread.
+            self.call_in_ui(self.root.bell)
 
     def start_recording(self):
         if self.recorder.is_recording or self.is_processing:
             return
-        if not self.config.get("api_key", "").strip():
-            self.set_status("An API key is required before recording.", "error")
+        if not all(self.config.get(key, "").strip() for key in ("api_key", "provider_base_url", "model")):
+            self.set_status("Open Settings and set the provider URL, API key, and model before recording.", "error")
             self.beep(400, 300)
             return
         self.beep(1000, 100)
@@ -570,17 +690,25 @@ class WhisperLiveApp:
 
     def process_audio_thread(self, audio_file):
         try:
-            text = process_audio(audio_file, self.config.get("target_language", "English"), self.config.get("api_key", "").strip())
+            text = process_audio(
+                audio_file,
+                self.config.get("target_language", "English"),
+                self.config.get("api_key", "").strip(),
+                self.config.get("provider_base_url", "").strip(),
+                self.config.get("model", "").strip(),
+            )
             if text:
                 paste_text(text)
                 self.beep(1200, 200)
-            self.root.after(0, lambda: self.set_status("Done. Ready for the next recording.", "ready"))
+            self.call_in_ui(lambda: self.set_status("Done. Ready for the next recording.", "ready"))
         except Exception as error:
             message = f"Could not process recording: {error}"
-            self.root.after(0, lambda: self.set_status(message, "error"))
+            self.call_in_ui(lambda: self.set_status(message, "error"))
         finally:
+            # Always release the processing lock so the UI can never stay
+            # permanently disabled after a failure.
             self.is_processing = False
-            self.root.after(0, self.hide_indicator)
+            self.call_in_ui(self.hide_indicator)
 
     def set_status(self, text, state):
         palettes = {
@@ -718,10 +846,10 @@ class WhisperLiveApp:
         self.tray_icon.run_detached()
 
     def on_tray_show(self, _icon, _item):
-        self.root.after(0, self.restore_window)
+        self.call_in_ui(self.restore_window)
 
     def on_tray_quit(self, _icon, _item):
-        self.root.after(0, self.quit_app)
+        self.call_in_ui(self.quit_app)
 
     def on_window_unmap(self, _event):
         if self.config.get("minimize_to_tray") and self.tray_icon:
@@ -756,6 +884,11 @@ class WhisperLiveApp:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    threading.excepthook = _log_thread_exception
     if tk is None:
         raise SystemExit("WhisperLive requires tkinter; install the python3-tk package.")
     if os.name == "nt":

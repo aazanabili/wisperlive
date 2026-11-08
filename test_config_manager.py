@@ -52,6 +52,21 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertNotIn("secret-value", raw)
         self.assertEqual(config_manager.load_config()["api_key"], "secret-value")
 
+    def test_provider_settings_roundtrip(self):
+        config_manager.save_config({
+            "api_key": "secret-value",
+            "provider_base_url": "https://api.example.com/v1",
+            "model": "custom-model",
+        })
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["provider_base_url"], "https://api.example.com/v1")
+        self.assertEqual(loaded["model"], "custom-model")
+        self.assertEqual(loaded["api_key"], "secret-value")
+
+    def test_defaults_include_empty_provider_settings(self):
+        self.assertEqual(config_manager.DEFAULT_CONFIG["provider_base_url"], "")
+        self.assertEqual(config_manager.DEFAULT_CONFIG["model"], "")
+
     def test_windows_dpapi_roundtrip_format(self):
         def fake_dpapi(protect, value):
             wrapped = b"wrapped:"
