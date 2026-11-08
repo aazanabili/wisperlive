@@ -15,7 +15,7 @@ description: |
 vendor: aazanabili
 homepage: https://github.com/aazanabili/wisperlive
 contents:
-  - src: ./dist/whisperlive
+  - src: ./dist-pkg/whisperlive
     dst: /usr/bin/whisperlive
     file_info:
       mode: 0755
