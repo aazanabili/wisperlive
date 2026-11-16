@@ -155,3 +155,49 @@ def _audio_size_limit(dialect: object) -> tuple[int, str]:
         if limit is not None:
             return limit
     return _AUDIO_SIZE_LIMITS[DIALECT_OPENAI]
+
+
+# --- groq-whisper multipart wire (dictation-modes; A6 s3b V1 verified) ------
+# ISO-639-1 codes for Groq's `language` form field (omitted for auto-detect).
+# Case-insensitive exact match on the UI target language; unknown languages map
+# to "" (auto) — NEVER invent a code the vendor may reject.
+GROQ_LANGUAGE_MAP = {
+    "english": "en", "arabic": "ar", "french": "fr", "spanish": "es",
+    "german": "de", "italian": "it", "portuguese": "pt", "russian": "ru",
+    "chinese": "zh", "japanese": "ja", "korean": "ko", "turkish": "tr",
+    "dutch": "nl", "polish": "pl", "ukrainian": "uk", "indonesian": "id",
+}
+
+
+def groq_language(target_language: object) -> str:
+    """UI target language -> ISO-639-1 for Groq; ``""`` means auto-detect."""
+    if not isinstance(target_language, str):
+        return ""
+    return GROQ_LANGUAGE_MAP.get(target_language.strip().lower(), "")
+
+
+def build_multipart_body(boundary: object, fields, file_part) -> bytes:
+    """Pure multipart/form-data body builder (transport stays in whisper_http).
+
+    ``fields``: ``((name, value), ...)`` text parts in wire order;
+    ``file_part``: ``(field_name, filename, content_type, data_bytes)``.
+    The CALLER supplies the boundary (uuid hex), keeping this module
+    stdlib-free; text parts encode UTF-8 (never raises on str input).
+    """
+    crlf = b"\r\n"
+    prefix = f"--{boundary}".encode("ascii", "ignore")
+    out = bytearray()
+    for name, value in fields:
+        out += prefix + crlf
+        out += f'Content-Disposition: form-data; name="{name}"'.encode("utf-8") + crlf
+        out += crlf
+        out += value.encode("utf-8") if isinstance(value, str) else bytes(value)
+        out += crlf
+    field_name, filename, content_type, data = file_part
+    out += prefix + crlf
+    out += (f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"'
+            .encode("utf-8")) + crlf
+    out += f"Content-Type: {content_type}".encode("ascii", "ignore") + crlf + crlf
+    out += bytes(data) + crlf
+    out += prefix + b"--" + crlf
+    return bytes(out)

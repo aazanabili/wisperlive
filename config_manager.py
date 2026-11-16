@@ -3,6 +3,10 @@
 The file is deliberately located from the environment on every call.  This
 is useful both for installed applications and for tests which change the
 environment after importing this module.
+
+It also owns dictation-modes secrets (D9 / A3 K1-K8): the per-vendor
+``api_keys_protected`` envelope, the per-current-provider derived
+``api_key``, and per-load deep-copied container defaults (A3 s1.1).
 """
 
 import base64
@@ -14,6 +18,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import dictation_config
 import providers
 
 
@@ -42,7 +47,29 @@ DEFAULT_CONFIG = {
     "run_at_startup": False,
     "theme": "dark",
     "installed_release_tag": "",
+    # --- dictation modes (T-2026-11-16-dictation-modes; A3 s1.1 authoritative) ---
+    "dictation_mode": "local",         # U4: local | chunked | live (default = local)
+    "cleanup_mode": "cloud",           # D2: cloud | local-ollama | off (cleanup ON)
+    "model_size": "auto",              # auto | fast | standard (faster-whisper tier)
+    "chunked_engine": "",              # "" = inherit "provider" (never drifts, A3 s1.2)
+    "chunked_asr_model": "",           # "" = engine-registry default (Groq ASR model)
+    "live_engine": "local",            # local | gemini-live | openai-realtime (fail closed)
+    "polish_mode": "insert",           # U3: insert | replace-experimental
+    "gemini_consent": False,           # U2: DEFAULT OFF (free tier trains on content)
+    "gemini_paid_key_confirmed": False,  # U2: explicit attestation, literal True only
+    "cleanup_model": "",               # "" = inherit "model" (stage-2 semantics)
+    "model_store_dir": "",             # "" = platform DATA dir default (devops s3)
+    "local_models": {},                # model_id -> absent | ready | stale (M21)
+    "api_keys_protected": {},          # D9: vendor id -> "dpapi:"/"base64:" envelope
+    "first_run_guidance_seen": False,  # M22: kind one-time guidance flag
+    "quota_limits": {},                # M23: "<engine_id>.<window_id>" -> int > 0
 }
+
+
+def _fresh_defaults():
+    """DEFAULT_CONFIG with fresh containers — ``copy()`` is SHALLOW (A3 s1.1 hazard)."""
+    return {key: (dict(value) if isinstance(value, dict) else value)
+            for key, value in DEFAULT_CONFIG.items()}
 
 
 logger = logging.getLogger(__name__)
@@ -163,19 +190,63 @@ def _read(path):
 
 
 def _normalized(config):
-    result = DEFAULT_CONFIG.copy()
+    result = _fresh_defaults()
     result.update(config)
     if "api_key_protected" in result:
         result["api_key"] = _unprotect_api_key(result.pop("api_key_protected"))
-    # Pure M1-M12 provider/model migration + registry URL resolution
-    # (never raises; api_key handling above stays untouched — see providers.py).
-    return providers.normalize_config(result)
+    # Pure M1-M12 migration + registry resolution (never raises; api_key
+    # handling above untouched — M12b keeps providers.py blind to secrets).
+    result = providers.normalize_config(result)
+    # K1 + D9 warning (dictation_config pure cores): str->str envelopes only;
+    # ONE aggregated count per load, NEVER key bytes; STORED entries (pre-K2)
+    # so a fresh migration cannot double-count within the same load.
+    keys_map = dictation_config.coerce_key_map(result.get("api_keys_protected"))
+    result["api_keys_protected"] = keys_map
+    base64_count = dictation_config.base64_fallback_count(keys_map)
+    if base64_count:
+        logger.warning("%d stored API key(s) use the base64 fallback (obfuscation only) "
+                       "on this platform; consider OS keyring integration.", base64_count)
+    # K2 (K7 guard) / K3: legacy migrates only under the configured provider;
+    # the map is authoritative for derived api_key (missing slot keeps legacy).
+    vendor = providers.resolve_provider_id(result.get("provider"))
+    keys_map = dictation_config.migrate_legacy_key(
+        keys_map, result.get("api_key"), vendor, _protect_api_key)
+    result["api_keys_protected"] = keys_map
+    derived = dictation_config.derive_current_key(keys_map, vendor, _unprotect_api_key)
+    if derived is not None:
+        result["api_key"] = derived
+    return result
+
+
+def get_vendor_key(config, vendor):
+    """K7 read: decrypted key for ONE vendor slot; '' when missing/undecryptable."""
+    return dictation_config.read_vendor_key(
+        config.get("api_keys_protected"), vendor, _unprotect_api_key)
+
+
+def set_vendor_key(config, vendor, plaintext):
+    """K7 write: protect plaintext into the vendor slot (raises like save_config
+    — never a plaintext downgrade) and sync derived api_key for the current
+    provider so switches never carry keys across.  False = invalid slot."""
+    updated = dictation_config.with_vendor_key(
+        config.get("api_keys_protected"), vendor, plaintext, _protect_api_key)
+    if updated is None:
+        return False
+    config["api_keys_protected"] = updated
+    if vendor == providers.resolve_provider_id(config.get("provider")):
+        config["api_key"] = plaintext if isinstance(plaintext, str) else ""
+    return True
 
 
 def _disk_config(config):
     result = dict(config)
     api_key = result.pop("api_key", "")
-    result["api_key_protected"] = _protect_api_key(api_key if isinstance(api_key, str) else "")
+    # K4 dual-write (Release A): map authoritative on disk AND legacy blob mirrors
+    # the CURRENT provider's slot (downgrade safety); never plaintext on disk.
+    blob = _protect_api_key(api_key if isinstance(api_key, str) else "")
+    result["api_keys_protected"] = dictation_config.disk_key_map(
+        result.get("api_keys_protected"), providers.resolve_provider_id(result.get("provider")), blob)
+    result["api_key_protected"] = blob
     return result
 
 
@@ -230,10 +301,10 @@ def load_config():
         if target.exists():
             raw_config = _read(target)
             config = _normalized(raw_config)
-            # Older builds stored api_key directly.  Rewrite that file on
-            # successful read so merely loading the app removes plaintext
-            # secrets from disk (and remains safe if saving fails).
-            if "api_key" in raw_config and "api_key_protected" not in raw_config:
+            # Older builds stored api_key directly; rewrite on first read to remove
+            # plaintext.  K8 (dictation_config) also fires for files predating the
+            # vendor map: the first post-upgrade load backfills it exactly once.
+            if dictation_config.needs_secret_rewrite(raw_config):
                 if not save_config(config):
                     logger.warning("Could not rewrite the legacy plaintext API key configuration")
             return config
@@ -261,9 +332,9 @@ def load_config():
                         except (OSError, ValueError, TypeError, json.JSONDecodeError):
                             logger.warning("Could not read the concurrently migrated configuration")
                 return config
-        config = DEFAULT_CONFIG.copy()
+        config = _fresh_defaults()
         if not save_config(config):
             logger.warning("Could not create the default configuration")
         return config
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return DEFAULT_CONFIG.copy()
+        return _fresh_defaults()

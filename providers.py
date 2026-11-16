@@ -3,7 +3,8 @@
 WHY: the settings dialog, ``config_manager``, and the recording pipeline
 need ONE authoritative description of the eight cloud presets (plus Custom)
 with zero I/O, UI toolkit, or transport code (plan §2.1 / A3 §2.1).  This
-module imports only ``dataclasses`` + ``typing`` — no network/tkinter, no
+module imports only ``dataclasses`` + ``typing`` + the pure
+``dictation_config`` rule leaf (M13-M23) — no network/tkinter, no
 ``config_manager``/``llm_api``/``main`` (acyclic, so config_manager imports
 THIS); every function is deterministic, thread-safe, and NEVER raises on
 malformed input — config handling degrades, never aborts startup.
@@ -16,6 +17,8 @@ cross-imports; QA pins both copies equal — R-11).
 
 from dataclasses import dataclass
 from typing import Literal, Mapping, Optional, Tuple
+
+from dictation_config import normalize_dictation_keys as _normalize_dictation_keys
 
 CUSTOM_PROVIDER_ID = "custom"
 DEFAULT_PROVIDER_ID = CUSTOM_PROVIDER_ID          # backward-compatible default (rule M1)
@@ -209,9 +212,8 @@ dialect_for = dialect_for_preset
 
 
 def normalize_config(config: dict) -> dict:
-    """Apply migration rules M1–M12 (plan §3.1) to ``config`` in place.  Managed
-    keys only, deletes nothing, never touches ``api_key`` (M12), idempotent, and
-    never raises — garbage degrades deterministically (N1)."""
+    """Apply migration rules M1-M23 (plan §3.1) in place: managed keys only,
+    deletes nothing, never touches ``api_key`` (M12), idempotent, never raises (N1)."""
     try:
         result = config if isinstance(config, dict) else dict(config)
     except (TypeError, ValueError, RuntimeError):
@@ -221,28 +223,27 @@ def normalize_config(config: dict) -> dict:
     result["provider"] = pid
     preset = _BY_ID.get(pid)
     if preset is None:
-        # M4: custom touches nothing else (URL/model stay byte-identical)
-        # beyond the two managed strays — the R3 IFF invariant.
+        # M4: custom touches nothing else (URL/model byte-identical) — only the two managed strays (R3 IFF).
         result["provider_variant"] = ""
         result["transcription_model"] = ""
-        return result
-    # M5/M6: variant -> valid id, preset default, or "" (never a dangling id).
-    result["provider_variant"] = resolve_variant_id(pid, result.get("provider_variant"))
-    # M7: the registry endpoint wins; the stored file value is discarded.
-    result["provider_base_url"] = resolve_base_url(pid, result["provider_variant"])
-    if preset.model_field_mode == MODE_SPLIT:
-        # M8/M9: split presets always store both curated stage models.
-        if not _text(result.get("model")):
-            result["model"] = preset.default_model
-        if not _text(result.get("transcription_model")):
-            result["transcription_model"] = preset.default_transcription_model
     else:
-        # M10 fail-closed "" (never a non-str reaching the guard's .strip())
-        # / M11: no stage-1 value leaks across vendors (R3 IFF at load).
-        if not _text(result.get("model")):
-            result["model"] = ""
-        result["transcription_model"] = ""
-    return result
+        # M5/M6: variant -> valid id, preset default, or "" (never a dangling id).
+        result["provider_variant"] = resolve_variant_id(pid, result.get("provider_variant"))
+        # M7: the registry endpoint wins; the stored file value is discarded.
+        result["provider_base_url"] = resolve_base_url(pid, result["provider_variant"])
+        if preset.model_field_mode == MODE_SPLIT:
+            # M8/M9: split presets always store both curated stage models.
+            if not _text(result.get("model")):
+                result["model"] = preset.default_model
+            if not _text(result.get("transcription_model")):
+                result["transcription_model"] = preset.default_transcription_model
+        else:
+            # M10 fail-closed "" / M11: no stage-1 value leaks across vendors (R3 IFF at load).
+            if not _text(result.get("model")):
+                result["model"] = ""
+            result["transcription_model"] = ""
+    # M13-M23 dictation keys: EVERY provider (M4 fall-through, R-U3 — byte-identity scoped to legacy keys).
+    return _normalize_dictation_keys(result, _KNOWN)
 
 
 def validate_provider_selection(config: Mapping[str, object]) -> Tuple[str, ...]:

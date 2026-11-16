@@ -22,6 +22,9 @@ from config_manager import load_config, save_config
 from indicator import RecordingIndicator
 from llm_api import DIALECT_OPENAI, LLMError, process_audio
 import providers
+from dictation_session import DictationSession
+import session_dialogs
+from model_store import ModelStore
 from settings_view import SettingsDialogMixin
 from single_instance import ALREADY_RUNNING_MESSAGE, acquire_instance_lock
 from startup import set_startup_registration
@@ -93,6 +96,8 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
             # manager must not stop the app from starting.
             self.window_icon = None
         self.recorder = AudioRecorder()
+        self.dictation = DictationSession(self)
+        self.model_store = ModelStore(self)   # D7 port: Settings-only downloads (models tab)
         self.is_processing = False
         self.is_exiting = False
         self._ui_queue = queue.Queue()
@@ -113,7 +118,7 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
             self.call_in_ui,
             resource_path("assets/whisperlive.png"),
             self.restore_window,
-            self.quit_app,
+            self.quit_app, on_polish=lambda: session_dialogs.polish_from_tray(self),
         )
         self.setup_hotkeys()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -142,6 +147,10 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
                 logger.exception("Unhandled error in a scheduled UI callback")
         if not self.is_exiting:
             self.root.after(50, self._drain_ui_queue)
+
+    def set_status(self, text, state):
+        super().set_status(text, state)
+        session_dialogs.note_status(self, text)  # event router: focus overlay + quota choice
 
     def _log_callback_exception(self, exc, value, traceback):
         logger.error("Uncaught exception in a Tk callback", exc_info=(exc, value, traceback))
@@ -192,7 +201,7 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
 
     def start_hold_recording(self):
         self.start_recording()
-        if self.recorder.is_recording:
+        if self.recorder.is_recording or bool(getattr(self, "dictation", None) and self.dictation.is_active):
             self.poll_hold_shortcut()
 
     def poll_hold_shortcut(self):
@@ -205,7 +214,8 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
     def toggle_recording(self):
         if self.is_processing:
             return
-        if self.recorder.is_recording:
+        dictation = getattr(self, "dictation", None)
+        if self.recorder.is_recording or (dictation is not None and dictation.is_active):
             self.stop_and_process()
         else:
             self.start_recording()
@@ -220,6 +230,11 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
 
     def start_recording(self):
         if self.recorder.is_recording or self.is_processing:
+            return
+        # Session modes route to dictation; anything else keeps today's path (D1; getattr = fixture-safe).
+        dictation = getattr(self, "dictation", None)
+        if dictation is not None and dictation.maybe_start():
+            session_dialogs.maybe_show_first_run(self, dictation)  # U1: one-time kind dialog
             return
         # D2 (Option A): the API key is optional - local providers work keyless.
         # Two-stage presets (MiMo) stage a separate stage-1 model, so the guard
@@ -239,6 +254,10 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
         self.indicator.show("Recording", "Listening for your voice", "recording")
 
     def stop_and_process(self):
+        dictation = getattr(self, "dictation", None)
+        if dictation is not None and dictation.is_active:
+            dictation.request_stop()   # session modes: drain -> ordered emission
+            return
         if not self.recorder.is_recording:
             return
         self.beep(800, 100)
@@ -313,6 +332,8 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
 
     def quit_app(self):
         self.is_exiting = True
+        if getattr(self, "dictation", None) is not None:
+            self.dictation.abort_all("quit")   # M2 extended: abort all + suppress injection
         self.clear_hotkeys()
         self.indicator.hide()
         if self.tray_icon:
@@ -324,6 +345,8 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format=app_logging.LOG_FORMAT)
     app_logging.setup_logging()
     threading.excepthook = app_logging.log_thread_exception
+    if "--smoke" in sys.argv:
+        import smoke; raise SystemExit(smoke.run())   # R-8c: BEFORE Tk init / instance lock
     if tk is None:
         raise SystemExit("WhisperLive requires tkinter; install the python3-tk package.")
     if os.name == "nt":

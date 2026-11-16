@@ -43,6 +43,12 @@ import urllib.parse
 import urllib.request
 
 # Wire-format names are owned by llm_payloads (R6); the tags/prompts/MiMo bound are deliberate re-exports.
+# Error taxonomy lives in llm_errors (pure leaf); every class is re-exported
+# VERBATIM so `llm_api.LLMError` etc. keep exact class identity for existing
+# imports/excepts and test pins (plan Step 1.4 / A3 T17) — never redefined here.
+from llm_errors import (ConsentRequiredError, DictationError, EngineUnavailableError,
+                        FocusLostError, LLMAuthError, LLMConfigError, LLMError,
+                        LLMNetworkError, LLMQuotaError, ModelNotDownloadedError)
 from llm_payloads import (DIALECT_MIMO_ASR, DIALECT_OPENAI, MIMO_MAX_AUDIO_BYTES,
                           _POST_PROCESS_PROMPT_TEMPLATE, _TRANSCRIBE_PROMPT,
                           _audio_size_limit, _build_transcription_payload)
@@ -67,21 +73,8 @@ MAX_AUDIO_BYTES = _audio_size_limit(DIALECT_OPENAI)[0]
 # Sentinel output language: clean the transcript but do not translate it.
 NO_TRANSLATION = "Original language"
 
-
-class LLMError(RuntimeError):
-    """A provider failure with a message safe to show in the UI."""
-
-
-class LLMConfigError(LLMError):
-    """Missing or invalid local configuration (URL, model, ...)."""
-
-
-class LLMAuthError(LLMError):
-    """The provider rejected the API key (HTTP 401/403)."""
-
-
-class LLMNetworkError(LLMError):
-    """The provider could not be reached, timed out, or dropped the link."""
+# NOTE: the LLM* error classes moved to llm_errors (pure) and are re-exported
+# through the import above — see its docstrings for the full hierarchy.
 
 
 def _safe_url_for_log(url: str) -> str:

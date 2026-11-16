@@ -110,6 +110,34 @@ def _audio_libs():
     return sd, sf
 
 
+def _float_block_to_pcm16(block) -> bytes:
+    """Float frames in [-1, 1] -> little-endian s16le mono bytes (D10 feed).
+
+    The numpy path handles real sounddevice arrays (numpy always ships with
+    sounddevice; imported lazily so this module imports without it); a stdlib
+    ``struct`` fallback keeps plain-list test fakes working with zero deps.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        import struct
+
+        def _flatten(values):
+            for value in values:
+                if isinstance(value, (list, tuple)):
+                    yield from _flatten(value)
+                else:
+                    yield float(value)
+
+        integers = []
+        for value in _flatten(block):
+            clamped = -1.0 if value < -1.0 else (1.0 if value > 1.0 else value)
+            integers.append(int(round(clamped * 32767.0)))
+        return struct.pack("<%dh" % len(integers), *integers)
+    array = np.asarray(block, dtype=np.float32).reshape(-1)
+    return (np.clip(array, -1.0, 1.0) * 32767.0).round().astype("<i2").tobytes()
+
+
 class AudioRecorder:
     def __init__(self, samplerate=16000, channels=1):
         self.samplerate = samplerate
@@ -120,6 +148,14 @@ class AudioRecorder:
         self._error = None
         self._blocks_written = 0
         self._current_path = None
+        # D10 block-stream mode (dictation-modes): an additive sibling of the
+        # classic temp-WAV flow — same capture seam, NO file. Classic state
+        # above is never reused, so neither flow can cross-talk with the other.
+        self.is_streaming = False
+        self._stream_sink = None
+        self._stream_thread = None
+        self._stream_stop = None
+        self._stream_error = None
 
     def start_recording(self) -> None:
         """Allocate a unique temp file and start capturing. Raises RecorderError if a
@@ -228,3 +264,83 @@ class AudioRecorder:
         except OSError:
             # Basename only: a full %TEMP% path leaks the Windows username.
             logger.warning("Could not delete temp file %s", os.path.basename(path))
+
+    # --- D10 block-callback stream mode (dictation-modes) --------------------
+    # Additive capture path for the in-memory segment pipeline: blocks go
+    # STRAIGHT to the caller's callback as s16le bytes — no temp file, no
+    # writer thread queue.  The classic methods above stay byte-identical
+    # (their tests pin them); the two modes are mutually exclusive.
+
+    def start_block_stream(self, on_block) -> None:
+        """Capture s16le blocks into ``on_block(bytes)`` (D10 — no disk).
+
+        ``on_block`` runs on the PortAudio thread and MUST be non-blocking
+        (``BlockQueue.offer`` is exactly that).  Raises ``RecorderError`` when
+        a capture is already active, the sink is not callable, or the capture
+        thread fails to start (same contract family as ``start_recording``);
+        an async thread failure surfaces on ``stop_block_stream`` instead.
+        """
+        if self.is_streaming:
+            return
+        if self.is_recording or (self._thread and self._thread.is_alive()):
+            raise RecorderError("Another recording is already active.")
+        if not callable(on_block):
+            raise RecorderError("Block stream requires a callable sink.")
+        self._stream_sink = on_block
+        self._stream_error = None
+        self._stream_stop = threading.Event()
+        self.is_streaming = True
+        self._stream_thread = threading.Thread(
+            target=self._stream_thread_main, name="whisperlive-block-stream", daemon=True
+        )
+        self._stream_thread.start()
+        logger.info("Block stream started")
+
+    def _stream_thread_main(self):
+        try:
+            # First-use resolution stays INSIDE the try: an ImportError/OSError
+            # becomes _stream_error -> RecorderError on stop, never a raw crash.
+            _audio_libs()
+            with sd.InputStream(
+                samplerate=self.samplerate,
+                channels=self.channels,
+                callback=self._stream_callback,
+            ):
+                # Condition-driven wait (no polling loop): stop sets the event.
+                self._stream_stop.wait()
+            # InputStream.__exit__ stops+closes and waits for the callback to
+            # return (PortAudio stop semantics) => every delivered block landed.
+        except Exception as error:
+            self._stream_error = error
+            logger.exception("Block stream thread failed")
+
+    def _stream_callback(self, indata, frames, time_info, status):
+        """PortAudio thread: float frames -> s16le bytes -> sink; NEVER raises."""
+        if status:
+            logger.warning("sounddevice stream status: %s", status)  # never raise into PortAudio
+        try:
+            self._stream_sink(_float_block_to_pcm16(indata))
+        except Exception:
+            logger.exception("Block stream sink failed")
+
+    def stop_block_stream(self) -> None:
+        """Stop streaming: bounded join, no file to clean (nothing to delete).
+
+        Returns ``None`` when not streaming; raises ``RecorderError`` when the
+        capture thread failed or did not stop cleanly — the caller maps that
+        to a status message exactly like ``stop_recording``.
+        """
+        if not self.is_streaming:
+            return None
+        self._stream_stop.set()
+        thread = self._stream_thread
+        if thread is not None:
+            thread.join(timeout=THREAD_JOIN_TIMEOUT_S)
+        error = self._stream_error
+        self.is_streaming = False
+        self._stream_thread = None
+        if error is not None:
+            raise RecorderError("Recording failed. Please try again.")
+        if thread is not None and thread.is_alive():
+            raise RecorderError("The recording did not stop cleanly. Please try again.")
+        logger.info("Block stream stopped")
