@@ -11,10 +11,12 @@ themselves are loaded lazily on first use.
 
 import ctypes
 import ctypes.util
+import logging
 import threading
-import traceback
 
 from windows_hotkey import HotkeyError, parse_shortcut_parts
+
+logger = logging.getLogger(__name__)
 
 # X11 modifier masks (X.h).
 SHIFT_MASK = 1 << 0
@@ -291,7 +293,7 @@ class LinuxGlobalHotkey:
                             self.callback()
                         except Exception:
                             # A UI callback failure must not unregister the shortcut permanently.
-                            traceback.print_exc()
+                            logger.exception("Hotkey callback failed")
                 self._stop.wait(0.01)
         except OSError as error:
             self._startup_error = HotkeyError(f"Could not register shortcut: {error}")
@@ -309,8 +311,13 @@ class LinuxGlobalHotkey:
 
 def send_paste():
     """Synthesise Ctrl+V through XTEST on the active X11 display."""
-    x11 = _x11()
-    xtst = _xtst()
+    try:
+        x11 = _x11()
+        xtst = _xtst()
+    except OSError as error:
+        # L2: missing libX11/libXtst must surface as the user-safe HotkeyError
+        # surface, not a raw OSError (parity with the XOpenDisplay failure).
+        raise HotkeyError(f"Could not load the X11 input libraries: {error}") from error
     display = x11.XOpenDisplay(None)
     if not display:
         raise HotkeyError("X11 display is unavailable (a Wayland-only session?)")

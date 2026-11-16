@@ -1,8 +1,10 @@
 import ctypes
+import logging
 import os
 import threading
-import traceback
 from ctypes import wintypes
+
+logger = logging.getLogger(__name__)
 
 
 WM_HOTKEY = 0x0312
@@ -204,7 +206,7 @@ class WindowsGlobalHotkey:
                         self.callback()
                     except Exception:
                         # A UI callback failure must not unregister the shortcut permanently.
-                        traceback.print_exc()
+                        logger.exception("Hotkey callback failed")
         finally:
             if registered:
                 self._user32.UnregisterHotKey(None, HOTKEY_ID)
