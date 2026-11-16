@@ -54,7 +54,15 @@
       "impact": "Transcript reaches Google free tier (may train) without the red consent disclosure gate that the live/chunked Gemini ENGINES require.",
       "minimal_fix": "Extend _require_gemini_consent to the cleanup stage when providers.resolve_provider_id(provider) == 'google-gemini' (local + chunked modes and polish_last cloud path), or state the cleanup exposure in the consent copy.",
       "blocks_release": false,
-      "mandate": "Orchestrator/user product decision (HN-DICT-04)."
+      "mandate": "Orchestrator/user product decision (HN-DICT-04).",
+      "status": "CLOSED",
+      "resolution": {
+        "date": "2026-11-17",
+        "decision": "USER DECISION Option A: gate BOTH paths",
+        "implementation": "gemini_gate.py pure policy leaf — ONE rule (gemini_consent OR gemini_paid_key_confirmed, literal True/M20) + ONE endpoint predicate routes_to_gemini (preset id/display label OR base-URL host generativelanguage.googleapis.com/[*].host; cloned Custom URLs included) — wired into settings save validation (VALIDATION_GEMINI_PROVIDER), dictation_session preflight (fail-closed ConsentRequiredError, zero network), chunked_engine._cleanup, polish_engine.polish_last, red disclosure on provider-tab Gemini key row.",
+        "auditor_verification": "2026-11-17 full call-site trace + bypass hunt: legacy main.process_audio_thread unreachable with an ungated Gemini route (dictation_mode fail-closed coercion at every config load; save-route blocker on the dialog path); live WS URLs hardcoded; host-rule suffix/userinfo tricks disproved. Fetch Models (settings_provider_view.py:267) remains ungated but carries ZERO transcript bytes -> HN-DICT-14 (non-blocking).",
+        "verdict_line": "F-2 CLOSED"
+      }
     },
     {
       "id": "F-3",
@@ -99,7 +107,8 @@
   ],
   "hardening_notes_index": [
     "HN-DICT-03 (F-1) cooldown checker comment-stripping fix — REQUIRED before next dependency change",
-    "HN-DICT-04 (F-2) U2 cleanup-stage Gemini consent gap — product decision",
+    "HN-DICT-04 (F-2) U2 cleanup-stage Gemini consent gap — CLOSED 2026-11-17 by gemini_gate.py unified endpoint rule (see f2-closure.md)",
+    "HN-DICT-14 content-free Gemini-bound requests ungated (Fetch Models settings_provider_view.py:267; dead classic path main.py:289) — no transcript bytes; harden with require_gemini_route for rule literalism",
     "HN-DICT-05 (F-3) model_store reverify-result discard (1-line fix)",
     "HN-DICT-06 (F-4) LLKHF_INJECTED filter completeness + docstring",
     "HN-DICT-07 (F-5) SendInput focus micro-race (accepted, documented)",
@@ -115,7 +124,7 @@
     {"id": "SEC-DICT-02", "control": "D9 WS/HTTP URL + auth redaction (ws_url_for_log / _safe_url_for_log; key in header never URL)", "status": "Verified"},
     {"id": "SEC-DICT-03", "control": "G3/I2 model manifest integrity (real digests, https-only mirrors, no userinfo, traversal-safe, verify-before-install, in-binary pins)", "status": "Verified"},
     {"id": "SEC-DICT-04", "control": "G3/I2 dependency cooldown + CI supply chain (Gitleaks/Trivy/SBOM/cooldown checker)", "status": "Failed (checker logic F-1; current pins compliant)", "residual": "HN-DICT-03/09/10"},
-    {"id": "SEC-DICT-05", "control": "U2 Gemini consent fail-closed before connection + red disclosure + paid-key attestation", "status": "Verified", "residual": "HN-DICT-04 (cleanup-stage scope gap)"},
+    {"id": "SEC-DICT-05", "control": "U2 Gemini consent fail-closed before ANY Gemini-bound traffic (unified gemini_gate.py rule) + red disclosure + paid-key attestation", "status": "Verified", "residual": "HN-DICT-04 CLOSED 2026-11-17; HN-DICT-14 (Fetch Models/classic-path content-free requests)"},
     {"id": "SEC-DICT-06", "control": "D3/D4 injection guard (focus before every emission, abort/is_exiting suppression, clipboard lifecycle)", "status": "Verified", "residual": "HN-DICT-06/07/08"},
     {"id": "SEC-DICT-07", "control": "D3 span invalidation (LL hook LLKHF_INJECTED filter, TTL, focus proof)", "status": "Verified", "residual": "HN-DICT-06"},
     {"id": "SEC-DICT-08", "control": "D6 quota admission/reserve atomicity + no silent failover (user-choice dialog)", "status": "Verified"},
@@ -141,7 +150,7 @@
   "verdict_rationale": "Zero exploitable vulnerabilities across the audited delta: D9/D11/G3/U2/D3/D4/D6 controls hold at every enforcement point read. One MEDIUM confirmed CONTROL DEFECT (F-1: the CI cooldown checker silently skips inline-commented pins) is not exploitable in the current dependency set (all pins independently verified >= 7 days) but must be fixed before the next dependency change. Remaining items are low-severity hardening notes and accepted documented residuals. Release may proceed; F-1 fix is a mandatory follow-up.",
   "residual_risks": [
     "F-1/HN-DICT-03 cooldown-gate durability (fix before next dependency change)",
-    "F-2/HN-DICT-04 Gemini cleanup-stage consent scope gap (product decision)",
+    "F-2/HN-DICT-04 Gemini cleanup-stage consent scope gap — CLOSED 2026-11-17 (gemini_gate.py; f2-closure.md); follow-up HN-DICT-14 is content-free and non-blocking",
     "SEC-D2-01 carried NEEDS_VALIDATION: Linux base64: at-rest key depends on home-dir privacy (no keyring in this release)",
     "SEC-LOG-01 carried NEEDS_VALIDATION: %LOCALAPPDATA%\\WhisperLive ACL check on a target machine",
     "HN-DICT-06/07 injection/span residuals (same-user class, mode-gated)"
