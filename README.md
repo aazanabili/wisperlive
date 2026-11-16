@@ -558,6 +558,52 @@ Simply reply with your preferred choice (e.g., *"Option A"* or *"Proceed with Ma
 
 ---
 
+## ⚙️ Provider Settings (LLM Presets)
+
+The **Settings ⚙ → LLM provider** dialog ships a provider selector backed by the preset registry in `providers.py`. Every preset pins a canonical base URL, so the **Provider Base URL** field is **read-only** while a preset is selected (the registry URL is what gets saved). Choosing **Custom (OpenAI-compatible URL)** keeps the field editable so you can point WhisperLive at any OpenAI-compatible endpoint.
+
+| Provider (exact selector label) | Base URL |
+| :--- | :--- |
+| Xiaomi MiMo | `https://api.xiaomimimo.com/v1` (API pay-as-you-go; Token Plan clusters below) |
+| OpenAI | `https://api.openai.com/v1` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| DeepSeek | `https://api.deepseek.com` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Mistral | `https://api.mistral.ai/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Ollama (local) | `http://localhost:11434/v1` |
+| Custom (OpenAI-compatible URL) | any URL you enter |
+
+### Xiaomi MiMo
+
+MiMo is the only preset with an **Endpoint / plan** selector — four options:
+
+| Endpoint / plan | Base URL |
+| :--- | :--- |
+| API (Pay-as-you-go) | `https://api.xiaomimimo.com/v1` |
+| Token Plan — Europe (AMS) | `https://token-plan-ams.xiaomimimo.com/v1` |
+| Token Plan — Singapore (SGP) | `https://token-plan-sgp.xiaomimimo.com/v1` |
+| Token Plan — China (CN) | `https://token-plan-cn.xiaomimimo.com/v1` |
+
+- Token Plan keys look like `tp-xxxxx`; use the cluster URL that matches your plan.
+- MiMo uses **two model fields** instead of one: **Transcription model** (`mimo-v2.5-asr`, stage 1) and **Post-processing model** (`mimo-v2.6-flash` by default; switch to `mimo-v2.6-pro` for complex work — stage 2).
+
+### Known limitations (honest)
+
+- **No TTS models.** The TTS models (`mimo-v2.5-tts`, `-voiceclone`, `-voicedesign`) are intentionally not offered: WhisperLive never synthesizes speech.
+- **ASR language coverage.** `mimo-v2.5-asr` officially supports Chinese and English (plus Chinese dialects); Arabic transcription is not claimed by the vendor. Post-processing (stage 2) still handles Arabic text.
+- **Token Plan terms of service.** The Token Plan ToS state the subscription quota is intended for coding tools — using it from this custom desktop app is at your own risk.
+- **Non-MiMo presets need an audio-capable chat model** for the transcription stage: the recording is sent to the chat-completions endpoint as audio, and a provider that cannot accept audio input returns an error (local Ollama models without audio support fail the same way).
+
+### Unchanged behavior
+
+- The API key stays **optional** for local Ollama (and Custom). Presets that require a key show an advisory hint, but **Save is never blocked** on an empty key.
+- **Fetch Models** is unchanged for generic (non-MiMo) providers: it queries the selected provider's URL (the registry URL for presets, the entered URL for Custom), asks for a key first on key-required presets, and fetched names are dropdown suggestions only. MiMo's model rows are curated, so there is no Fetch button for them.
+- Output language, global shortcut, and every other setting are untouched.
+- Older `config.json` files keep working as-is: a missing or unrecognized `provider` is treated as **Custom**, with the stored URL, model, and API key preserved byte-for-byte. Provider settings apply to the next recording.
+
+---
+
 ## 🧪 الاختبارات
 لا يحتاج سلوك الاختبارات إلى أي مكتبات خارجية؛ شغّل:
 ```bash
