@@ -88,21 +88,40 @@ class SplitModuleSmokeTests(unittest.TestCase):
                         )
 
 
+def _fixture_abs_path(*parts: str, drive: str = "C") -> str:
+    """Absolute fake path built with the HOST OS's root + separator semantics.
+
+    build_startup_command() normalizes sys.executable through
+    os.path.abspath(), which is a no-op for native absolute paths but prefixes
+    the CWD onto foreign (e.g. Windows `C:\\...`) paths on POSIX. Fixtures are
+    therefore built natively (drive letter + `\\` on nt, `/` + `os.path.join`
+    parts on POSIX) so the quoted-command contract is asserted EXACTLY on both
+    the windows-latest and ubuntu-latest CI legs — no regex/substring loosening.
+    """
+    root = f"{drive}:{os.sep}" if os.name == "nt" else os.sep
+    return os.path.join(root, *parts)
+
+
 class StartupCommandTests(unittest.TestCase):
     def test_build_startup_command_frozen(self):
-        with mock.patch.object(sys, "executable", r"C:\Program Files\Whisper Live\WhisperLive.exe"), \
+        executable = _fixture_abs_path("Program Files", "Whisper Live", "WhisperLive.exe")
+        with mock.patch.object(sys, "executable", executable), \
                 mock.patch.object(sys, "frozen", True, create=True):
             command = startup.build_startup_command()
 
-        self.assertEqual(command, r'"C:\Program Files\Whisper Live\WhisperLive.exe"')
+        # strict contract: single executable, whole path double-quoted (spaces intact)
+        self.assertEqual(command, f'"{executable}"')
 
     def test_build_startup_command_script_mode(self):
-        with mock.patch.object(sys, "executable", r"C:\Python 3\python.exe"), \
+        executable = _fixture_abs_path("Python 3", "python.exe")
+        script = _fixture_abs_path("projects", "wisperlive", "main.py", drive="H")
+        with mock.patch.object(sys, "executable", executable), \
                 mock.patch.object(sys, "frozen", False, create=True), \
-                mock.patch.object(startup, "SCRIPT_PATH", r"H:\projects\wisperlive\main.py"):
+                mock.patch.object(startup, "SCRIPT_PATH", script):
             command = startup.build_startup_command()
 
-        self.assertEqual(command, r'"C:\Python 3\python.exe" "H:\projects\wisperlive\main.py"')
+        # strict contract: `"<exe>" "<script>"`, both quoted, exactly one space between
+        self.assertEqual(command, f'"{executable}" "{script}"')
 
     def test_script_path_points_at_repo_main_py(self):
         # SCRIPT_PATH is a module global read at call time (patchable in tests).
