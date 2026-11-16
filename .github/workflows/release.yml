@@ -35,6 +35,151 @@ jobs:
     - name: Run unit tests
       run: python -m unittest discover -v
 
+  # Gate-1 additions (A10A11 s4, R-5 constraint): secret/vuln/cooldown scans
+  # live in their OWN job so the no-ML `test` job stays byte-identical.
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0   # Gitleaks reviews history, not just the tip
+
+    - name: Secret scan (Gitleaks)
+      uses: gitleaks/gitleaks-action@v3.0.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Dependency vulnerabilities (Trivy, report HIGH+CRITICAL)
+      uses: aquasecurity/trivy-action@v0.36.0
+      with:
+        scan-type: 'fs'
+        severity: 'HIGH,CRITICAL'
+        exit-code: '0'
+        ignore-unfixed: 'true'
+
+    - name: Fail on CRITICAL vulnerabilities
+      uses: aquasecurity/trivy-action@v0.36.0
+      with:
+        scan-type: 'fs'
+        severity: 'CRITICAL'
+        exit-code: '1'
+        ignore-unfixed: 'true'
+
+    # 7-day dependency cooldown (policy 3.0.0): every pinned package must be at
+    # least 7 days old at upload time (inline per annex: "inline python
+    # acceptable" - keeps tools/ out of this task's scope).
+    - name: Dependency release-age cooldown (7d)
+      run: |
+        python3 - <<'PY'
+        import datetime, json, re, sys, urllib.request
+        pins, unparsed = [], []
+        for path in ("requirements.txt", "requirements-build.txt", "requirements-ml.txt"):
+            try:
+                lines = open(path, encoding="utf-8").read().splitlines()
+            except OSError:
+                continue
+            for raw in lines:
+                # F-1: strip inline '#' comments BEFORE parsing (ML pins carry them),
+                # then the environment marker; nothing non-empty may vanish silently.
+                line = raw.split("#", 1)[0].split(";")[0].strip()
+                if not line:
+                    continue
+                match = re.match(r"^([A-Za-z0-9_.\-]+)==([\w.\-]+)$", line)
+                if match:
+                    pins.append(match.groups())
+                else:
+                    unparsed.append(f"{path}: {line}")
+        now = datetime.datetime.now(datetime.timezone.utc)
+        failures = []
+        for name, version in pins:
+            try:
+                with urllib.request.urlopen(
+                        f"https://pypi.org/pypi/{name}/{version}/json", timeout=30) as response:
+                    stamp = json.load(response)["urls"][0]["upload_time"]
+                uploaded = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                if uploaded.tzinfo is None:
+                    uploaded = uploaded.replace(tzinfo=datetime.timezone.utc)
+                age = now - uploaded
+                if age < datetime.timedelta(days=7):
+                    failures.append(f"{name}=={version} is {age.days}d old (<7d cooldown)")
+            except Exception as error:
+                failures.append(f"{name}=={version}: could not verify ({error})")
+        print(f"checked {len(pins)} pins, {len(unparsed)} unparsed line(s)")
+        for entry in unparsed:
+            print("WARN unparsed requirement line (not cooldown-checked):", entry)
+        for failure in failures:
+            print("FAIL:", failure)
+        sys.exit(1 if failures else 0)
+        PY
+
+  # Optional ML smoke (A10A11 s4): proves the OPTIONAL extras + pinned VAD in
+  # a real interpreter on both OSes; the no-ML `test` job never installs these.
+  ml-smoke:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install base + ML extras
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r requirements.txt -r requirements-ml.txt
+
+    - name: "Cache pinned hub files (annex: cache keyed on the manifest hash)"
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/huggingface
+        key: hf-fw-tiny-${{ hashFiles('assets/models_manifest.json') }}
+
+    - name: Assert optional extras import (annex s1 pins)
+      run: python -c "import faster_whisper, ctranslate2, onnxruntime, av, tokenizers, huggingface_hub; print('ML extras import OK')"
+
+    - name: Silero ONNX session load (commit-pinned + sha256, torch-free D8)
+      shell: bash
+      run: |
+        URL='https://raw.githubusercontent.com/snakers4/silero-vad/bfdc0193023f121ea5b3cc7b176dbed570a68a59/src/silero_vad/data/silero_vad.onnx'
+        SHA='1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3'
+        curl -fsSL --retry 3 --retry-all-errors -o silero_vad.onnx "$URL"
+        echo "$SHA  silero_vad.onnx" | sha256sum -c -
+        python -c "import onnxruntime as ort; s = ort.InferenceSession('silero_vad.onnx', providers=['CPUExecutionProvider']); print('silero session OK:', [i.name for i in s.get_inputs()])"
+
+    - name: Whisper tiny probe (local_files_only, 1s synthetic silence)
+      shell: bash
+      run: |
+        cat > ml_probe.py <<'PY'
+        import io, struct, wave
+        from huggingface_hub import snapshot_download
+        from faster_whisper import WhisperModel
+        path = snapshot_download('Systran/faster-whisper-tiny')
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+            wav.writeframes(struct.pack("<16000h", *([0] * 16000)))
+        model = WhisperModel(path, device="cpu", compute_type="int8", local_files_only=True)
+        list(model.transcribe(io.BytesIO(buffer.getvalue()))[0])
+        print("whisper probe OK")
+        PY
+        python ml_probe.py
+
+    - name: Non-AVX2 proxy probe (CT2_FORCE_CPU_ISA=GENERIC, annex s1)
+      shell: bash
+      env:
+        CT2_FORCE_CPU_ISA: GENERIC
+      run: python ml_probe.py
+
   build-windows:
     runs-on: windows-latest
     needs: test
@@ -71,6 +216,35 @@ jobs:
           exit 1
         }
 
+    # OURS (A10A11 s4): artifact budget — catches accidental model bundling
+    # (installer ships NO models; downloads happen on first use in Settings).
+    - name: Enforce 350MB artifact budget
+      shell: pwsh
+      run: |
+        $size = (Get-Item 'dist\WhisperLive.exe').Length
+        if ($size -gt 350MB) {
+          Write-Error "WhisperLive.exe is $([math]::Round($size/1MB,1)) MB - over the 350 MB budget."
+          exit 1
+        }
+        Write-Output "WhisperLive.exe $([math]::Round($size/1MB,1)) MB <= 350 MB"
+
+    # OURS (A10A11 s4): SPDX SBOM generated per build, scanned, and attached
+    # to the release asset list below.
+    - name: Generate SBOM (SPDX)
+      uses: anchore/sbom-action@v0.24.3
+      with:
+        path: .
+        format: spdx
+        output-name: sbom.spdx
+
+    - name: Scan SBOM (Trivy, fail on CRITICAL)
+      uses: aquasecurity/trivy-action@v0.36.0
+      with:
+        sbom-path: sbom.spdx
+        severity: 'CRITICAL'
+        exit-code: '1'
+        ignore-unfixed: 'true'
+
     - name: Upload Artifact (For Manual Triggers)
       if: github.event_name == 'workflow_dispatch'
       uses: actions/upload-artifact@v4
@@ -82,7 +256,28 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
-        files: dist/WhisperLive.exe
+        files: |
+          dist/WhisperLive.exe
+          sbom.spdx
+        generate_release_notes: true
+        body: |
+          ## Notes for this release
+
+          **CPU floor (on-device dictation):** x86-64 with SSE4.1 minimum, AVX2
+          recommended. On non-AVX2 CPUs the `auto` model size picks the fast/base
+          tier with a notice — never a crash.
+
+          **Models download on first use (Settings only):** the installer ships
+          NO models. Sizes, SHA-256 verification, pause/resume, disk-space
+          preflight (+20%), and regional mirrors are shown in Settings → Models.
+
+          **Cloud quota:** cloud engines show a live quota countdown; WhisperLive
+          never switches engines on its own — you choose on every limit (no
+          silent failover).
+
+          **LOCAL extras:** the optional speech packages are bundled inside the
+          binary when built with them; without them Local stays hidden with its
+          reason shown in Settings.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   build-linux:
@@ -133,6 +328,33 @@ jobs:
           echo "dist/WhisperLive was not produced by the build." >&2
           exit 1
         fi
+
+    # OURS (A10A11 s4): artifact budget — catches accidental model bundling.
+    - name: Enforce 350MB artifact budget
+      run: |
+        size=$(stat -c%s dist/WhisperLive)
+        budget=$((350 * 1024 * 1024))
+        if [ "$size" -gt "$budget" ]; then
+          echo "dist/WhisperLive is $((size / 1024 / 1024)) MB - over the 350 MB budget." >&2
+          exit 1
+        fi
+        echo "dist/WhisperLive $((size / 1024 / 1024)) MB <= 350 MB"
+
+    # OURS (A10A11 s4): SPDX SBOM generated per build, scanned, and attached.
+    - name: Generate SBOM (SPDX)
+      uses: anchore/sbom-action@v0.24.3
+      with:
+        path: .
+        format: spdx
+        output-name: sbom.spdx
+
+    - name: Scan SBOM (Trivy, fail on CRITICAL)
+      uses: aquasecurity/trivy-action@v0.36.0
+      with:
+        sbom-path: sbom.spdx
+        severity: 'CRITICAL'
+        exit-code: '1'
+        ignore-unfixed: 'true'
 
     - name: Stage package payload
       run: |
@@ -213,5 +435,25 @@ jobs:
           dist-pkg/*.rpm
           dist-pkg/*.pkg.tar.zst
           dist-pkg/*.AppImage
+          sbom.spdx
+        generate_release_notes: true
+        body: |
+          ## Notes for this release
+
+          **CPU floor (on-device dictation):** x86-64 with SSE4.1 minimum, AVX2
+          recommended. On non-AVX2 CPUs the `auto` model size picks the fast/base
+          tier with a notice — never a crash.
+
+          **Models download on first use (Settings only):** the installer ships
+          NO models. Sizes, SHA-256 verification, pause/resume, disk-space
+          preflight (+20%), and regional mirrors are shown in Settings → Models.
+
+          **Cloud quota:** cloud engines show a live quota countdown; WhisperLive
+          never switches engines on its own — you choose on every limit (no
+          silent failover).
+
+          **LOCAL extras:** the optional speech packages are bundled inside the
+          binary when built with them; without them Local stays hidden with its
+          reason shown in Settings.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

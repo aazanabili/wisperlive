@@ -15,3 +15,5 @@ pystray==0.19.5
 python-xlib==0.33; sys_platform == "linux"
 sounddevice==0.5.6
 soundfile==0.14.0
+# Phase-3 cloud live modes (R-U4 devops-pinned): pure-python, no native risk.
+websocket-client==1.9.2

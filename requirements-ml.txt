@@ -1,0 +1,16 @@
+# Optional ML extras for ON-DEVICE dictation (D8) — installed ONLY by the
+# build + ml-smoke CI jobs, NEVER by the plain `test` job (the no-ML import
+# path must stay green: 250 unit tests run without these).
+#
+# All pins verified by devops A10A11 (annex s1, [V] = PyPI release-date checked
+# against the 7-day dependency cooldown):
+faster-whisper==1.2.1      # [V] 2025-10-31, py3 wheel 1.12MB
+ctranslate2==4.8.5         # [V] 2026-11-02 (14d>7d OK). 4.9.0 (2026-11-10) BLOCKED by 7d cooldown
+onnxruntime==1.31.1        # [V] 2026-10-26 OK. 1.32.0 (2026-11-13) BLOCKED by 7d cooldown
+av==18.1.0                 # [V] 2026-08-12; cp311-abi3 → runs on 3.11 CI + 3.14 local; fw needs av>=11
+tokenizers==0.23.3         # [V] 2026-10-09, cp310-abi3, 2.87MB (native → pin)
+huggingface-hub==0.36.2    # [V] 2026-02-06; fw-era pin (fw 1.2.1 does `import huggingface_hub` +
+                           #      snapshot_download → 0.36.x API-safe); avoids untested hf-hub 1.x/2.x
+                           #      breaks. Compat confirmed by the ml-smoke job (annex R2 gate).
+# Torch is FORBIDDEN: the `silero-vad` pip package hard-requires torch (annex).
+# VAD runs on the raw commit-pinned silero_vad.onnx via onnxruntime only.
