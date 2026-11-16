@@ -207,6 +207,187 @@ class StopAndProcessTests(unittest.TestCase):
         )
 
 
+class SnapshotThreadingTests(unittest.TestCase):
+    """V-1 (plan 2.2): the UI-thread snapshot carries dialect +
+    transcription_model to the worker thread; the 5-positional-arg contract
+    stays intact."""
+
+    def _run_stop(self, config):
+        app = _app(is_exiting=False)
+        app.config = dict(config)
+        app.recorder = mock.MagicMock()
+        app.recorder.is_recording = True
+        app.recorder.stop_recording.return_value = "whisperlive-snap.wav"
+
+        with mock.patch.object(main, "winsound"), \
+                mock.patch.object(main.threading, "Thread") as thread:
+            app.stop_and_process()
+        return app, thread
+
+    def test_mimo_snapshot_passes_dialect_and_transcription_model(self):
+        app, thread = self._run_stop({
+            "provider": "xiaomi-mimo",
+            "provider_variant": "token-plan-sgp",
+            "provider_base_url": "https://token-plan-sgp.xiaomimimo.com/v1",
+            "api_key": "tp-key",
+            "model": "mimo-v2.6-flash",
+            "transcription_model": "mimo-v2.5-asr",
+            "target_language": "English",
+        })
+        thread.assert_called_once()
+        call = thread.call_args
+        # bound methods compare by identity per access; compare the components
+        self.assertEqual(call.kwargs["target"].__func__,
+                         app.process_audio_thread.__func__)
+        self.assertIs(call.kwargs["target"].__self__, app)
+        # exactly 5 positional args (the D4 snapshot contract), passed to
+        # Thread via its args= keyword
+        self.assertEqual(call.kwargs["args"], (
+            "whisperlive-snap.wav", "English", "tp-key",
+            "https://token-plan-sgp.xiaomimimo.com/v1", "mimo-v2.6-flash",
+        ))
+        # keyword-only stage options snapshotted on the UI thread
+        self.assertEqual(call.kwargs["kwargs"],
+                         {"dialect": "mimo-asr",
+                          "transcription_model": "mimo-v2.5-asr"})
+        self.assertTrue(call.kwargs["daemon"])
+
+    def test_default_snapshot_passes_openai_dialect_and_empty_stage1(self):
+        _app_unused, thread = self._run_stop({
+            "provider": "openai",
+            "provider_base_url": "https://api.openai.com/v1",
+            "api_key": "sk-key",
+            "model": "gpt-audio",
+            "transcription_model": "",
+            "target_language": "English",
+        })
+        thread.assert_called_once()
+        self.assertEqual(thread.call_args.kwargs["kwargs"],
+                         {"dialect": "openai", "transcription_model": ""})
+
+    def test_unknown_provider_snapshots_openai_dialect(self):
+        _app_unused, thread = self._run_stop({
+            "provider": "future-vendor",
+            "provider_base_url": "https://u/v1",
+            "model": "m",
+            "target_language": "English",
+        })
+        self.assertEqual(thread.call_args.kwargs["kwargs"],
+                         {"dialect": "openai", "transcription_model": ""})
+
+
+class ConditionalForwardingTests(unittest.TestCase):
+    """Pin the conditional kwarg forwarding of process_audio_thread: ONLY
+    non-default stage options become kwargs, so the legacy 5-arg call shape
+    (assert_called_once_with(*SNAPSHOT)) stays byte-exact for default runs."""
+
+    def setUp(self):
+        self.process_patch = mock.patch.object(main, "process_audio",
+                                               return_value=TRANSCRIPT)
+        self.paste_patch = mock.patch.object(main, "paste_text")
+        self.winsound_patch = mock.patch.object(main, "winsound")
+        self.process_mock = self.process_patch.start()
+        self.paste_mock = self.paste_patch.start()
+        self.winsound_mock = self.winsound_patch.start()
+        for patcher in (self.winsound_patch, self.paste_patch, self.process_patch):
+            self.addCleanup(patcher.stop)
+
+    def test_defaults_forward_no_kwargs_at_all(self):
+        app = _app(is_exiting=True)
+        app.process_audio_thread(*SNAPSHOT)
+        # EXACT call shape: 5 positional args, zero keyword args.
+        self.process_mock.assert_called_once_with(*SNAPSHOT)
+        self.assertEqual(self.process_mock.call_args.kwargs, {})
+
+    def test_mimo_options_forward_both_kwargs(self):
+        app = _app(is_exiting=True)
+        app.process_audio_thread(*SNAPSHOT, dialect="mimo-asr",
+                                 transcription_model="mimo-v2.5-asr")
+        self.process_mock.assert_called_once_with(
+            *SNAPSHOT, dialect="mimo-asr", transcription_model="mimo-v2.5-asr")
+
+    def test_default_dialect_forwards_only_transcription_model(self):
+        app = _app(is_exiting=True)
+        app.process_audio_thread(*SNAPSHOT, dialect="openai",
+                                 transcription_model="stage1-x")
+        # dialect == DIALECT_OPENAI must NOT be forwarded (default is implied)
+        self.process_mock.assert_called_once_with(
+            *SNAPSHOT, transcription_model="stage1-x")
+        self.assertNotIn("dialect", self.process_mock.call_args.kwargs)
+
+    def test_empty_transcription_model_forwards_only_dialect(self):
+        app = _app(is_exiting=True)
+        app.process_audio_thread(*SNAPSHOT, dialect="mimo-asr",
+                                 transcription_model="")
+        self.process_mock.assert_called_once_with(*SNAPSHOT, dialect="mimo-asr")
+        self.assertNotIn("transcription_model",
+                         self.process_mock.call_args.kwargs)
+
+
+class StartRecordingGuardTests(unittest.TestCase):
+    """Guard matrix (plan 2.2): the recording gate checks EFFECTIVE models -
+    stage 1 = transcription_model or model, stage 2 = model (fail-closed on
+    both)."""
+
+    def _app(self, config):
+        app = _app(is_exiting=False)
+        app.config = dict(config)
+        app.recorder = mock.MagicMock()
+        app.recorder.is_recording = False
+        # Shadow the real beep (winsound.Beep would sound on this host).
+        app.beep = mock.MagicMock()
+        return app
+
+    def _base(self, **overrides):
+        config = {
+            "provider_base_url": "https://api.openai.com/v1",
+            "model": "gpt-audio",
+            "transcription_model": "",
+        }
+        config.update(overrides)
+        return config
+
+    def test_empty_transcription_model_falls_back_to_model(self):
+        app = self._app(self._base(transcription_model=""))
+        app.start_recording()
+        app.recorder.start_recording.assert_called_once()
+        app.set_status.assert_called_once_with(
+            "Recording in progress. Press the shortcut to stop.", "recording")
+        app.beep.assert_called_once_with(1000, 100)
+
+    def test_split_models_allow_recording(self):
+        app = self._app(self._base(transcription_model="mimo-v2.5-asr",
+                                   model="mimo-v2.6-flash"))
+        app.start_recording()
+        app.recorder.start_recording.assert_called_once()
+
+    def test_both_models_empty_blocks_recording(self):
+        app = self._app(self._base(model="", transcription_model=""))
+        app.start_recording()
+        app.recorder.start_recording.assert_not_called()
+        app.set_status.assert_called_once_with(
+            "Open Settings and set the provider URL and model before recording.",
+            "error")
+        app.beep.assert_called_once_with(400, 300)  # the error beep
+
+    def test_stage2_model_empty_blocks_even_with_stage1_set(self):
+        # effective_post = model must be non-empty (fail-closed on BOTH).
+        app = self._app(self._base(model="", transcription_model="stage1-x"))
+        app.start_recording()
+        app.recorder.start_recording.assert_not_called()
+        app.set_status.assert_called_once_with(
+            "Open Settings and set the provider URL and model before recording.",
+            "error")
+
+    def test_missing_base_url_blocks_recording(self):
+        app = self._app(self._base(provider_base_url=""))
+        app.start_recording()
+        app.recorder.start_recording.assert_not_called()
+        app.set_status.assert_called_once_with(
+            "Open Settings and set the provider URL and model before recording.",
+            "error")
+
+
 class UiMarshalingTests(unittest.TestCase):
     # MP-09 (REPLACES test_post_to_ui_swallows_destroyed_root, ui c row 6d):
     # _post_to_ui no longer exists - workers never touch root.after, so the
