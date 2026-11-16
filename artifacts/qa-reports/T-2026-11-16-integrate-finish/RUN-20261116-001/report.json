@@ -1,0 +1,223 @@
+{
+  "schema_version": "1.0",
+  "task_id": "T-2026-11-16-integrate-finish",
+  "run_id": "RUN-20261116-001",
+  "status": "PASS",
+  "secondary_conditions": [
+    "PASS qualifier: All required checks in the declared scope passed on the reported environment and tested state.",
+    "Platform honesty: executed ONLY on Windows (win32, Python 3.14.10, repo venv). Linux/ubuntu-latest discovery was NOT run locally and is NOT claimed as validated; 3 X11 smoke tests (WHISPERLIVE_X11_TESTS gate) and 5 LinuxStartupRegistrationTests are env-gated skips on this host and must run in the release.yml test job (Phase 8 / D6 V6 gate).",
+    "Sanctioned retarget row 2-R (test_single_instance stderr assertion -> handler capture) was NOT applied: the D1 merge-blocking gate was GREEN on its first run with teardown restoration alone; only sanctioned row 2-S was applied to test_single_instance.py."
+  ],
+  "started_at": "2026-11-16T06:58:17Z",
+  "completed_at": "2026-11-16T07:18:00Z",
+  "tested_state": {
+    "revision": "513f70b49edcbbc28e681ac41893a68bfbb6ded1",
+    "base_revision": "513f70b49edcbbc28e681ac41893a68bfbb6ded1",
+    "dirty_state_fingerprint": "4b304070eecc8fdd5900307faa811b4a152beb4677353dc233b2be8757373c2b",
+    "fingerprint_scope": ["test_app_logging.py", "test_audio_recorder.py", "test_auto_typer.py", "test_llm_api.py", "test_main_processing.py", "test_single_instance.py", "test_startup_registration.py", "test_updater.py", "test_views_startup_split.py"],
+    "stable": true,
+    "stability_evidence": "HEAD identical (513f70b) and dirty_state_fingerprint identical (4b304070...) immediately before and after the fingerprinted full-suite evidence run; tests write only to tempfile locations -> no STALE condition."
+  },
+  "environments": [
+    { "platform": "windows-x64", "runtime": "python-3.14.10 (repo venv\\Scripts\\python.exe)", "services": [] }
+  ],
+  "scope": {
+    "risk_tier": "Tier 3",
+    "changed_functionalities": [
+      "test_main_processing.py: port from wip-cleanup-hardening + retarget to call_in_ui queue world (D4)",
+      "test_views_startup_split.py: port + extension for final module set (settings_view, single_instance, SettingsDialogMixin, startup Linux symbols)",
+      "test_startup_registration.py: two-suite merge (startup module patch targets, main.set_startup_registration module-bound name, upstream wording, Linux XDG class retarget)",
+      "test_audio_recorder.py: UNION of both suites (lifecycle + bundled-PortAudio discovery, class-disjoint)",
+      "test_app_logging.py: port with D1 capture-and-restore of root handlers + sys.stderr",
+      "test_llm_api.py: +7 converted/hardening cases (H1/H2/H3/H4/H7) and H5 FakeResponse read cursor",
+      "test_auto_typer.py: port with core 12.2 seam retarget + 2 dispatch ADDs",
+      "test_updater.py: port with APP_MODULES refreshed to the final module set",
+      "test_single_instance.py: sanctioned rows 2-R (conditional, NOT applied) and 2-S (applied)"
+    ],
+    "impacted_areas": ["Phase 5 test reconciliation gates D1/D3/D4", "suite discovery on the dual-OS CI matrix (readiness only)"],
+    "required_checks": [
+      "D1 GATE (merge-blocking): venv\\Scripts\\python.exe -m unittest test_app_logging test_single_instance in ONE process -> GREEN",
+      "FULL SUITE: venv\\Scripts\\python.exe -m unittest discover -v -> ALL GREEN (0 failures, 0 errors)",
+      "D4: test_main_processing inventory re-derived from the actual wip file and locked as a 10-case ID table with retargets",
+      "Zero case loss vs BOTH sources for test_startup_registration and test_audio_recorder (AST name-set containment)",
+      "test_llm_api: all 35 upstream cases survive + 7 core 12.7 additions present",
+      "test_gemini_api disposition map: every one of the 12 deleted cases mapped to a surviving or added case (evidence-checked)",
+      "py_compile preflight of all written test files",
+      "Git ownership gate: DELTA_CHANGES contains ONLY test files (no production code/config touched)"
+    ],
+    "selection_rationale": "Tier 3 cross-version integration: full reconciliation of both suites with adversarial containment checks (case loss, disposition completeness) plus the binding D1/D4 gates; stdlib unittest+mock only, no network/audio/registry/keystrokes.",
+    "excluded_areas": [
+      "Production code, configs, CI workflows, dependency manifests (read-only for QA)",
+      "Real network/audio devices/Windows registry/keystroke synthesis (all mocked by design)",
+      "Linux/ubuntu-latest unittest execution (host unavailable -> routed to Phase 8 CI gate)",
+      "Coverage-percentage measurement (no coverage tool installed; installing dependencies is forbidden for QA)"
+    ],
+    "incomplete_required_checks": []
+  },
+  "scope_item_status": [
+    { "item": "Step 5.1 D4: port+retarget test_main_processing (10 case IDs) and extend test_views_startup_split", "status": "PASS", "evidence": "py_compile exit 0; discover shows test_main_processing=10 (MP-01..MP-10, only MP-09 replaced per ui c row 6d) and test_views_startup_split=7 (zero loss vs wip, all row-7 extensions present)" },
+    { "item": "Step 5.2: reconcile test_startup_registration (both suites, 9 baseline errors)", "status": "PASS", "evidence": "merged=14 cases, missing_vs_wip=[] and missing_vs_upstream_head=[]; all 9 baseline errors resolved; 5 Linux cases env-skipped locally (run on Linux CI)" },
+    { "item": "Step 5.3: UNION test_audio_recorder (both suites, class-disjoint)", "status": "PASS", "evidence": "merged=18 = 10 ours + 4 BundledPortAudioTests + 4 FindLibraryWrapperTests; missing_vs_wip=[] missing_vs_upstream=[]; all 18 executed green locally" },
+    { "item": "Step 5.4: test_app_logging (D1) + test_llm_api (12.7 additions) + gemini disposition + auto_typer + updater", "status": "PASS", "evidence": "app_logging 4/4 green; llm_api 42 green (35 upstream + 7 added, missing_vs_upstream=[]); gemini 12/12 disposition-mapped with replacement cases evidence-verified; auto_typer 8 green (6 survived + 2 ADDs); updater 2 green with 15-module APP_MODULES" },
+    { "item": "Step 5.5: D1 GATE (merge-blocking, one process)", "status": "PASS", "evidence": "venv\\Scripts\\python.exe -m unittest test_app_logging test_single_instance -> OK (12 tests, skipped=1) FIRST RUN; no 2-R edit required" },
+    { "item": "Step 5.6: FULL suite discover -v", "status": "PASS", "evidence": "attempt 1: Ran 150 tests OK (skipped=9); fingerprinted evidence run 2: Ran 150 tests OK (skipped=9), stable fingerprint -> not FLAKY, not STALE" },
+    { "item": "Linux (ubuntu-latest) execution of the same suite", "status": "PLATFORM_REQUIRED", "evidence": "Windows host cannot execute the Linux matrix leg; 5 Linux startup cases + 3 X11 smoke cases are env-gated skips locally; verification belongs to release.yml test job (Phase 8 D6 V6 gate) - declared here explicitly instead of claiming cross-platform validation" }
+  ],
+  "d4_case_inventory": {
+    "source_of_truth": "git show wip-cleanup-hardening:test_main_processing.py (actual file, 10 test methods; core section 12.9's '12 cases' count is ADVISORY and incorrect - actual=10, ui section c row 6 agrees)",
+    "retarget_world": "call_in_ui queue-based dispatch; process_audio_thread 5-arg UI-thread snapshot; llm_api.LLMError; main.logger patch target; upstream error-prefix copy",
+    "cases": [
+      { "case_id": "MP-01", "source": "ProcessAudioThreadTests.test_m2_paste_suppressed_when_exiting", "disposition": "R", "retarget": "3-arg -> 5-arg snapshot; quiescence now asserts _ui_queue.empty() (call_in_ui strict no-op while is_exiting) instead of root.after absence only" },
+      { "case_id": "MP-02", "source": "ProcessAudioThreadTests.test_pastes_and_marshals_completion_when_not_exiting", "disposition": "R", "retarget": "root.after(0, cb) marshaling -> enqueued-not-executed assertion + explicit _drain_ui_queue() + pump reschedule asserted at root.after(50, ...); added is_processing reset + indicator.hide via drained _on_processing_finished" },
+      { "case_id": "MP-03", "source": "ProcessAudioThreadTests.test_temp_file_deleted_after_processing", "disposition": "R", "retarget": "5-arg snapshot; single-owner finally-delete unchanged in intent" },
+      { "case_id": "MP-04", "source": "ProcessAudioThreadTests.test_temp_file_deleted_even_when_exiting", "disposition": "R", "retarget": "5-arg snapshot; paste still suppressed; file still deleted" },
+      { "case_id": "MP-05", "source": "ProcessAudioThreadTests.test_transcription_error_maps_to_error_status", "disposition": "R", "retarget": "gemini_api.TranscriptionError -> llm_api.LLMError; status copy -> upstream prefix 'Could not process recording: {error}'; completion drained from queue; is_processing seeded True so the reset assertion is non-vacuous" },
+      { "case_id": "MP-06", "source": "ProcessAudioThreadTests.test_paste_error_maps_to_error_status", "disposition": "R", "retarget": "same prefix copy change; completion beep still asserted NOT called; drained via _drain_ui_queue" },
+      { "case_id": "MP-07", "source": "ProcessAudioThreadTests.test_unexpected_error_maps_to_generic_status", "disposition": "R", "retarget": "generic message kept; patch target main.logger with assert exception() called once (ui c); added no-internal-detail assertion on the status message" },
+      { "case_id": "MP-08", "source": "StopAndProcessTests.test_recorder_error_maps_to_status_without_processing", "disposition": "V", "retarget": "unchanged assertions; beep interception switched from mock.patch.object(main.winsound, 'Beep') to mock.patch.object(main, 'winsound') so the SAME main.winsound.Beep interception point works when main.winsound is None on POSIX (dual-OS CI matrix); main.threading still patched" },
+      { "case_id": "MP-09", "source": "UiMarshalingTests.test_post_to_ui_swallows_destroyed_root", "disposition": "REPLACED", "retarget": "_post_to_ui no longer exists (workers never touch root.after -> destroyed-root hazard gone, ui c row 6d). Replaced by UiMarshalingTests.test_call_in_ui_enqueues_and_becomes_noop_when_exiting: enqueue -> is_exiting strict no-op (qsize stays 1) -> drain during shutdown -> pump stops rescheduling" },
+      { "case_id": "MP-10", "source": "UiMarshalingTests.test_on_processing_finished_is_ui_thread_writer", "disposition": "V", "retarget": "unchanged (UI-thread single writer of is_processing, indicator.hide)" }
+    ]
+  },
+  "disposition_map": {
+    "test_gemini_api.py": {
+      "file_state": "ABSENT from the finish tree (never present at 513f70b; gemini_api.py also absent; verified via git ls-files and filesystem). The wip-only file is deleted by design per ui section c row 12 - all 12 cases accounted below.",
+      "cases": [
+        { "old_case": "GeminiApiTests.test_missing_api_key_raises_value_error", "disposition": "DROP (obsolete semantics)", "replacement": "FetchModelsTests.test_omits_auth_header_without_key (D2: key optional; verified present)", "verified": true },
+        { "old_case": "GeminiApiTests.test_generate_content_receives_bounded_request_options", "disposition": "replaced", "replacement": "FetchModelsTests.test_request_timeout_is_always_set + ProcessAudioTests.test_request_timeout_is_always_set (x2; verified present)", "verified": true },
+        { "old_case": "GeminiApiTests.test_no_transcript_content_is_logged", "disposition": "re-targeted (H3)", "replacement": "ProcessAudioTests.test_no_transcript_or_credentials_in_logs (core 12.7.4; added this phase)", "verified": true },
+        { "old_case": "GeminiApiTests.test_timeout_maps_to_user_error", "disposition": "covered", "replacement": "FetchModelsTests.test_timeout_is_reported / test_connect_timeout_is_reported / test_read_timeout_is_reported + ProcessAudioTests.test_timeout_is_reported (verified present)", "verified": true },
+        { "old_case": "GeminiApiTests.test_unauthenticated_maps_to_api_key_message", "disposition": "covered", "replacement": "test_auth_failure_is_classified + test_auth_failure_401_is_classified + test_auth_failure_403_is_classified (verified present)", "verified": true },
+        { "old_case": "GeminiApiTests.test_blocked_prompt_maps_to_filtered_message", "disposition": "merged", "replacement": "ProcessAudioTests.test_http_400_maps_to_user_safe_message_without_body_echo (core 12.7.6; added)", "verified": true },
+        { "old_case": "GeminiApiTests.test_value_error_from_text_maps_to_filtered_message", "disposition": "merged", "replacement": "ProcessAudioTests.test_http_400_maps_to_user_safe_message_without_body_echo (core 12.7.6; added)", "verified": true },
+        { "old_case": "GeminiApiTests.test_invalid_argument_maps_to_filtered_message", "disposition": "merged", "replacement": "ProcessAudioTests.test_http_400_maps_to_user_safe_message_without_body_echo (core 12.7.6; added)", "verified": true },
+        { "old_case": "GeminiApiTests.test_empty_text_is_error", "disposition": "covered", "replacement": "ProcessAudioTests.test_empty_completion_is_reported + PostProcessTextTests.test_empty_completion_is_reported (verified present)", "verified": true },
+        { "old_case": "GeminiApiTests.test_missing_audio_file_maps_to_user_error", "disposition": "re-added (core 12.7.1 / H1)", "replacement": "ProcessAudioTests.test_missing_audio_file_maps_to_user_error (added)", "verified": true },
+        { "old_case": "GeminiApiTests.test_guard_request_options_kwarg_exists", "disposition": "DROP (google SDK gone)", "replacement": "FetchModelsTests.test_request_timeout_is_always_set is the timeout guard; no google SDK import remains anywhere", "verified": true },
+        { "old_case": "GeminiApiTests.test_unexpected_exception_maps_to_generic_message", "disposition": "re-added (core 12.7.3 / H2)", "replacement": "ProcessAudioTests.test_unexpected_exception_maps_to_generic_message (added)", "verified": true }
+      ],
+      "beyond_gemini_additions": [
+        "ProcessAudioTests.test_audio_file_too_large_is_rejected (H1 20 MiB cap, core 12.7.2)",
+        "FetchModelsTests.test_base_url_with_userinfo_or_query_is_rejected (H4 credential-URL rejection, core 12.7.5)",
+        "ProcessAudioTests.test_http_429_maps_to_rate_limit_message (H7, core 12.7.7)"
+      ]
+    },
+    "MP-09_replacement": { "old_case": "UiMarshalingTests.test_post_to_ui_swallows_destroyed_root", "disposition": "REPLACED per ui section c row 6d (hazard no longer exists)", "replacement": "UiMarshalingTests.test_call_in_ui_enqueues_and_becomes_noop_when_exiting", "verified": true }
+  },
+  "retarget_rows": {
+    "2-R": { "file": "test_single_instance.py", "sanctioned": true, "applied": false, "detail": "Conditional row: stderr assertion -> handler-based capture ONLY if the D1 gate stayed red after test_app_logging teardown restoration. Gate was GREEN on the first run, so the edit was NOT made; upstream file otherwise untouched apart from 2-S." },
+    "2-S": { "file": "test_single_instance.py", "sanctioned": true, "applied": true, "detail": "test_lock_file_path_is_per_user_in_tempdir: expected parent is XDG_RUNTIME_DIR on POSIX when set, else tempfile.gettempdir() (Windows keeps the original expectation); required adding 'import os'. assertEqual/assertRegex intent preserved; per-user path intent upheld (O0 ruling, plan revision log)." },
+    "3": { "file": "test_startup_registration.py", "sanctioned": "D3 + ui section c row 3", "applied": true, "detail": "(a) StartupRegistrationTests = our patch targets startup.winreg/startup.SCRIPT_PATH/startup.APP_NAME/startup.STARTUP_KEY + upstream's skipUnless(win32) guard; (b) SaveAndApplyTests = ONE class, patch site main.set_startup_registration (module-bound name, ui e.3 pitfall - upstream's main.WhisperLiveApp patch site does not exist in the merged main), upstream's expected messages kept verbatim, saved-dict retarget api_key -> target_language (real key collected by the merged collect_form_values; preserves 'other settings saved' intent while honoring row 3b); (c) LinuxStartupRegistrationTests = upstream's 5 cases with self.app.set_startup_registration -> startup.set_startup_registration, main.__file__ -> startup.SCRIPT_PATH, main.WhisperLiveApp.startup_command() -> startup.build_startup_command()." },
+    "6": { "file": "test_main_processing.py", "sanctioned": "D3 + ui section c row 6", "applied": true, "detail": "Ported from wip and retargeted to the call_in_ui world per the D4 table (MP-01..MP-10): 5-arg snapshot, llm_api.LLMError, queue drain, upstream error prefix, main.logger target, MP-09 replaced. Beep interception via mock.patch.object(main, 'winsound') (POSIX-portable while keeping the main.winsound.Beep interception point)." },
+    "7": { "file": "test_views_startup_split.py", "sanctioned": "Step 5.1 explicit instruction + ui section c row 7", "applied": true, "detail": "Ported from wip (7/7 cases kept) + extended: settings_view and single_instance in the no-main-import AST list; issubclass(WhisperLiveApp, SettingsDialogMixin); settings_view.COLORS is themes.COLORS; startup.set_linux_startup_registration + startup._linux_autostart_dir symbol checks; tkinter-import guard (skipTest only when tkinter is absent - assertion intact wherever Tk exists)." },
+    "8": { "file": "test_updater.py", "sanctioned": "Step 5.4 + ui section c row 8", "applied": true, "detail": "APP_MODULES refreshed: gemini_api -> llm_api, added settings_view, single_instance, linux_hotkey (15 modules; all files existence-checked by the case itself; zero print/print_exc verified by the AST guard)." },
+    "9": { "file": "test_auto_typer.py", "sanctioned": "Step 5.4 + core section 12.2", "applied": true, "detail": "Ported 6/6 cases; seam retarget mock.patch.object(auto_typer.keyboard, 'send') -> mock.patch.object(auto_typer, '_send_paste_keystroke') because the merged module resolves keyboard lazily (starts as None); the exact send('ctrl+v') assertion survives verbatim in the 2 core-12.2 ADD cases (DispatchSeamTests), which run the REAL dispatch with _IS_WINDOWS patched both ways." },
+    "10": { "file": "test_llm_api.py", "sanctioned": "Step 5.4 + core section 12.7", "applied": true, "detail": "All 35 upstream cases kept byte-identical (AST containment: missing_vs_upstream=[]); +7 additions; FakeResponse.read gains a cursor (core 12.7 sanctioned internal fake update for the adopted H5 chunked read - no assertion weakened)." },
+    "12": { "file": "test_gemini_api.py", "sanctioned": "Step 5.4 + ui section c row 12", "applied": true, "detail": "File confirmed absent; all 12 cases mapped in disposition_map with replacement-case existence evidence." }
+  },
+  "per_file_counts": {
+    "test_app_logging": { "total": 4, "passed": 4, "skipped": 0, "failed": 0, "origin": "wip port + D1" },
+    "test_audio_recorder": { "total": 18, "passed": 18, "skipped": 0, "failed": 0, "origin": "UNION wip(10)+upstream(8)" },
+    "test_auto_typer": { "total": 8, "passed": 8, "skipped": 0, "failed": 0, "origin": "wip(6) + core12.2 ADD(2)" },
+    "test_config_manager": { "total": 13, "passed": 13, "skipped": 0, "failed": 0, "origin": "upstream unmodified" },
+    "test_linux_hotkey": { "total": 13, "passed": 10, "skipped": 3, "failed": 0, "origin": "upstream unmodified (3 X11 smoke env-gated)" },
+    "test_llm_api": { "total": 42, "passed": 42, "skipped": 0, "failed": 0, "origin": "upstream(35) + core12.7 ADD(7)" },
+    "test_main_processing": { "total": 10, "passed": 10, "skipped": 0, "failed": 0, "origin": "wip port + D4 retarget" },
+    "test_single_instance": { "total": 8, "passed": 7, "skipped": 1, "failed": 0, "origin": "upstream + sanctioned 2-S (2-R not applied)" },
+    "test_startup_registration": { "total": 14, "passed": 9, "skipped": 5, "failed": 0, "origin": "MERGED wip(9) + upstream(14), row 3" },
+    "test_ui_dispatch": { "total": 3, "passed": 3, "skipped": 0, "failed": 0, "origin": "upstream unmodified" },
+    "test_updater": { "total": 2, "passed": 2, "skipped": 0, "failed": 0, "origin": "wip port + APP_MODULES refresh" },
+    "test_views_startup_split": { "total": 7, "passed": 7, "skipped": 0, "failed": 0, "origin": "wip port + row 7 extension" },
+    "test_windows_hotkey": { "total": 8, "passed": 8, "skipped": 0, "failed": 0, "origin": "upstream unmodified (actual=8; core 12.3's '9' is advisory - actual file wins)" },
+    "_TOTAL": { "total": 150, "passed": 141, "skipped": 9, "failed": 0 }
+  },
+  "traceability": [
+    { "requirement": "D1 (merge-blocking): test_app_logging captures/restores root handlers AND sys.stderr", "check": "one-process gate command", "status": "PASS", "evidence": "OK (12 tests, skipped=1) first run; stderr assertion passed via logging.lastResort dynamic sys.stderr - 2-R not needed" },
+    { "requirement": "D2: api_key optional - test_omits_auth_header_without_key must stay green", "check": "FetchModelsTests.test_omits_auth_header_without_key", "status": "PASS", "evidence": "ran green in both full-suite runs" },
+    { "requirement": "D3: upstream tests unmodified except documented retarget rows", "check": "git diff --name-only HEAD + per-file containment checks", "status": "PASS", "evidence": "delta = 9 test files only; test_config_manager/test_ui_dispatch/test_windows_hotkey/test_linux_hotkey untouched; test_single_instance changed only by 2-S" },
+    { "requirement": "D4: inventory re-derived from actual wip file, locked as case-ID table, retargets reference case IDs", "check": "d4_case_inventory + discover count", "status": "PASS", "evidence": "10 case IDs MP-01..MP-10; test_main_processing executes exactly 10" },
+    { "requirement": "D7: _on_processing_finished posted from worker finally (no path leaves is_processing stuck)", "check": "MP-02/MP-05/MP-10 + test_ui_dispatch pump tests", "status": "PASS", "evidence": "drained completion resets is_processing on success and typed/generic error paths" },
+    { "requirement": "Zero case loss vs both sources (Step 5.3 + Step 5.2)", "check": "AST name-set containment vs wip-cleanup-hardening and 9a35dd0/HEAD", "status": "PASS", "evidence": "startup_registration missing_vs_wip=[] missing_vs_upstream=[]; audio_recorder missing_vs_wip=[] missing_vs_upstream=[]" },
+    { "requirement": "Gemini case disposition completeness (Step 5.4)", "check": "disposition_map with replacement-case existence greps", "status": "PASS", "evidence": "12/12 mapped, 16/16 replacement names verified present in test_llm_api.py" }
+  ],
+  "test_changes": {
+    "created": ["test_main_processing.py", "test_views_startup_split.py", "test_app_logging.py", "test_auto_typer.py", "test_updater.py"],
+    "updated": ["test_startup_registration.py (merged, row 3)", "test_audio_recorder.py (union, row 5)", "test_llm_api.py (+7 cases, cursor)", "test_single_instance.py (row 2-S only)"],
+    "removed": ["test_gemini_api.py (confirmed absent - dispositioned, 12 cases mapped)"]
+  },
+  "static_checks": [
+    { "check": "py_compile of all 9 written/edited test files", "result": "PASS", "detail": "exit 0" },
+    { "check": "unittest TestLoader discovery count", "result": "PASS", "detail": "150 tests across 13 test modules (non-zero, discovered)" },
+    { "check": "AST case-set containment (no case loss vs wip and upstream sources)", "result": "PASS", "detail": "all missing_* lists empty except the design-sanctioned MP-09 replacement" },
+    { "check": "Git ownership gate (QA write-scope)", "result": "PASS", "detail": "git diff --name-only HEAD -> only test_* files; no production/config/CI file in DELTA_CHANGES; zero silent commits (HEAD still 513f70b)" },
+    { "check": "no print()/print_exc() in the 15 production modules (test_updater AST guard)", "result": "PASS", "detail": "ran green" }
+  ],
+  "commands_executed": [
+    "git status --porcelain && git rev-parse HEAD && git branch --show-current",
+    "venv\\Scripts\\python.exe -m unittest discover   # BASELINE starting state: Ran 102 tests, FAILED (errors=9, skipped=9)",
+    "venv\\Scripts\\python.exe -m py_compile test_main_processing.py test_views_startup_split.py test_startup_registration.py test_audio_recorder.py test_app_logging.py test_llm_api.py test_auto_typer.py test_updater.py test_single_instance.py   # exit 0",
+    "venv\\Scripts\\python.exe -m unittest test_app_logging test_single_instance -v   # D1 GATE: Ran 12 tests, OK (skipped=1), exit 0",
+    "venv\\Scripts\\python.exe -m unittest discover -v   # ATTEMPT 1: Ran 150 tests in 2.202s, OK (skipped=9), exit 0",
+    "git status --porcelain (fingerprint) > FP1; venv\\Scripts\\python.exe -m unittest discover -v > full_run.txt; git status --porcelain (fingerprint) > FP2   # EVIDENCE RUN 2: Ran 150 tests in 2.234s, OK (skipped=9), STABLE=True, exit 0",
+    "venv\\Scripts\\python.exe -c '<TestLoader per-module counts>'   # 150 total, per-file table above",
+    "venv\\Scripts\\python.exe casecheck.py   # AST name-set containment vs git show wip-cleanup-hardening:<file> and git show HEAD:<file>"
+  ],
+  "test_results": {
+    "unique_tests_executed": 150,
+    "passed": 141,
+    "failed": 0,
+    "flaky": 0,
+    "skipped": 9,
+    "not_run": 0,
+    "timed_out": 0,
+    "total_execution_attempts": 414,
+    "notes": "414 = 102 (baseline diagnosis run) + 12 (D1 gate) + 150 (full attempt 1) + 150 (fingerprinted evidence run). Skip breakdown: 3 X11 smoke (WHISPERLIVE_X11_TESTS env gate), 5 LinuxStartupRegistrationTests (skipIf win32 - run on Linux CI), 1 same-process lock case (skipIf win32 - upstream gate)."
+  },
+  "coverage": {
+    "available": false,
+    "metric": "case-set containment",
+    "unit": "cases",
+    "scope": "test files vs both source suites",
+    "comparable": true,
+    "before": null,
+    "after": null,
+    "delta": null,
+    "notes": "No coverage tool is installed and installing dependencies is forbidden for QA; coverage evidence is the AST containment proof (zero case loss vs wip-cleanup-hardening and upstream 9a35dd0, gemini disposition completeness) recorded in traceability."
+  },
+  "failures": [],
+  "pre_existing_failures": [],
+  "flaky_tests": [],
+  "defects": [
+    { "id": "QA-D-1", "classification": "test_defect", "scope": "test_startup_registration.py (9 baseline errors)", "state": "RESOLVED this phase", "detail": "Old-layout assertions: patch targets main.winreg / main.APP_NAME / main.STARTUP_KEY / main.__file__ and mock.patch.object(main.WhisperLiveApp, 'set_startup_registration') no longer resolve in the merged architecture (registry/XDG moved to startup.py; set_startup_registration is a module-level name in main). Reconciled per row 3; all 14 cases green." },
+    { "id": "QA-D-2", "classification": "test_defect", "scope": "test_main_processing.py MP-09", "state": "RESOLVED this phase", "detail": "wip case bound the removed private helper _post_to_ui (destroyed-root hazard) - the merged queue design eliminates that hazard; replaced per ui section c row 6d and accounted in disposition_map." },
+    { "id": "QA-D-3", "classification": "test_defect", "scope": "test_auto_typer.py seam", "state": "RESOLVED this phase", "detail": "wip patched auto_typer.keyboard.send but the merged module resolves keyboard lazily (auto_typer.keyboard starts as None -> patch target would AttributeError); retargeted per core 12.2 with the exact ctrl+v assertion preserved in DispatchSeamTests." },
+    { "id": "QA-D-4", "classification": "source_document_discrepancy", "scope": "core section 12.9 / 12.3 counts", "state": "DOCUMENTED", "detail": "core 12.9 says test_main_processing has 12 cases and core 12.3 says test_windows_hotkey has 9; ACTUAL files have 10 and 8 respectively. Per D4, the actual file is the source of truth; no case was lost." },
+    { "id": "QA-D-5", "classification": "production_defect", "scope": "production code", "state": "NONE FOUND", "detail": "No production defect surfaced: all reconciliation reds traced to stale test bindings, not to main/startup/llm_api/audio_recorder/auto_typer behavior. Production code was never opened for edits (ownership gate clean)." }
+  ],
+  "coverage_gaps": [
+    "Linux/ubuntu-latest suite execution not performed locally (PLATFORM_REQUIRED - Windows host); includes real X11 hotkey smoke and the 5 Linux XDG startup cases; must be verified by release.yml test job (Phase 8 D6 gate).",
+    "Frozen-build PortAudio bundle path (_bundled_portaudio under sys._MEIPASS) is covered by tempdir simulations only; a real PyInstaller build smoke belongs to the Phase 4/8 build gates.",
+    "Real registry writes, real keystrokes, real microphone and real network are intentionally never exercised (mocked by design; policy-compliant)."
+  ],
+  "resource_usage": {
+    "elapsed_seconds": 1200,
+    "budget_seconds": 1800,
+    "artifact_bytes": 30426,
+    "limitations": [
+      "started_at anchored to the first recorded QA action (baseline source extraction, 06:58:17Z); unclocked analysis time before that is not included.",
+      "Full-suite wall time ~2.2 s per run; recorder stall tests use bounded joins (<=5 s contract) inside the suite."
+    ]
+  },
+  "cleanup": { "completed": true, "remaining_resources": ["%LOCALAPPDATA%\\Temp\\opencode\\qa-finish (QA scratch: extracted source baselines + casecheck.py, session temp, outside the repo - harmless; no repo files, no processes, no ports)"] },
+  "artifacts": ["artifacts/qa-reports/T-2026-11-16-integrate-finish/RUN-20261116-001/report.json"],
+  "report_detail": { "mode": "full", "evidence_shortened": false, "omitted_counts": {} },
+  "delivery": { "destination": "artifacts/qa-reports/T-2026-11-16-integrate-finish/RUN-20261116-001/report.json", "state": "written_and_verified" },
+  "confidence": "high",
+  "confidence_rationale": "Two consecutive full-suite runs green (150/150, 9 documented env-gated skips) on an unchanged fingerprint, D1 gate green on its first run, zero case loss proven by AST containment against BOTH source suites, all 12 gemini dispositions verified against surviving case names, and the git ownership gate shows test files only. Cross-platform confidence for the ubuntu leg remains UNVERIFIED locally and is honestly excluded (Phase 8 CI).",
+  "manager_action_required": false,
+  "recommended_manager_actions": [
+    "Phase 8: run the release.yml test job (workflow_dispatch V6) on BOTH ubuntu-latest and windows-latest to close the PLATFORM_REQUIRED Linux leg; expect the 5 Linux XDG startup cases to execute there.",
+    "Phase 5 plan checkbox: mark Step 5.1-5.4 and 5.6 [x]; Step 5.5 D1 gate [x] with note '2-R not required, 2-S applied'.",
+    "Phase 6 D3 ledger and Phase 7 SecOps can proceed against this green suite."
+  ]
+}
