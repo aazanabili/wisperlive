@@ -53,7 +53,15 @@ def _lock_owner_tag():
 
 
 def lock_file_path():
-    return Path(tempfile.gettempdir()) / f"whisperlive-{_lock_owner_tag()}.lock"
+    base = Path(tempfile.gettempdir())
+    if os.name != "nt":
+        # D8 hardening: prefer the per-user (0700) XDG_RUNTIME_DIR over
+        # world-writable /tmp, where another local account could pre-create
+        # the lock path. Windows is unaffected (%TEMP% is already per-user).
+        xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
+        if xdg_runtime:
+            base = Path(xdg_runtime)
+    return base / f"whisperlive-{_lock_owner_tag()}.lock"
 
 
 class SingleInstanceLock:
@@ -69,6 +77,17 @@ class SingleInstanceLock:
         flags |= getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(self.path, flags, 0o600)
+        if os.name != "nt":
+            # D8 hardening: reject a lock file pre-created by another local
+            # account (POSIX owner check; Windows %TEMP% is per-user).
+            try:
+                owned_by_user = os.fstat(fd).st_uid == os.getuid()
+            except OSError:
+                os.close(fd)
+                raise
+            if not owned_by_user:
+                os.close(fd)
+                raise OSError(errno.EPERM, "single-instance lock file is not owned by the current user")
         try:
             _lock_fd(fd)
         except OSError as exc:
