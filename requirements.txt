@@ -1,48 +1,17 @@
-altgraph==0.17.5
-annotated-types==0.8.0
-certifi==2026.7.22
-cffi==2.1.1
-charset-normalizer==3.5.1
-colorama==0.4.6
-cryptography==50.0.1
-google-ai-generativelanguage==0.6.15
-google-api-core==2.25.2
-google-api-python-client==2.200.0
-google-auth==2.58.0
-google-auth-httplib2==0.4.2
-googleapis-common-protos==1.75.0
-grpcio==1.83.1
-grpcio-status==1.71.2
-httplib2==0.32.0
-idna==3.19
+# Direct runtime dependencies. Transitive deps are resolved by pip;
+# build tooling lives in requirements-build.txt.
+
 keyboard==0.13.5
 # NumPy 2.5.x requires Python >=3.12; 2.4.6 is the newest release supporting Python 3.11.
+# Kept as an explicit pin (soundfile hard-depends on numpy for audio buffers),
+# so it must resolve deterministically for Python 3.11 CI and Python 3.14 local builds.
 numpy==2.4.6
-packaging==26.3
-pefile==2024.8.26
-proto-plus==1.28.2
-protobuf==5.29.6
-pyasn1==0.6.4
-pyasn1_modules==0.4.2
-pycparser==3.0
-pydantic==2.13.5
-pydantic_core==2.46.5
-pyinstaller==6.22.2
-pyinstaller-hooks-contrib==2026.7
-pyparsing==3.3.2
-pyperclip==1.11.0
 Pillow==11.3.0
+pyperclip==1.11.0
 pystray==0.19.5
-# pystray's Linux tray backend imports Xlib.
+# pystray's X11 tray backend (pystray/_xorg.py) imports Xlib; pystray declares
+# python-xlib>=0.17 on Linux and the spec bundles hiddenimport 'Xlib' on Linux,
+# so pin it explicitly (like numpy) for deterministic Linux builds.
 python-xlib==0.33; sys_platform == "linux"
-python-dotenv==1.2.3
-pywin32-ctypes==0.2.3
-requests==2.34.2
-setuptools==84.0.0
 sounddevice==0.5.6
 soundfile==0.14.0
-tqdm==4.70.0
-typing-inspection==0.4.4
-typing_extensions==4.16.0
-uritemplate==4.2.0
-urllib3==2.7.0

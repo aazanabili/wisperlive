@@ -1,5 +1,6 @@
 import contextlib
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -92,8 +93,16 @@ class SingleInstanceLockTests(unittest.TestCase):
         )
 
     def test_lock_file_path_is_per_user_in_tempdir(self):
+        # SANCTIONED RETARGET 2-S (O0 ruling, plan revision log 2026-11-16):
+        # on POSIX, D8 prefers the per-user XDG_RUNTIME_DIR over world-writable
+        # /tmp; Windows (%TEMP% per-user) keeps the original expectation. The
+        # per-user path intent is preserved on every platform.
         path = single_instance.lock_file_path()
-        self.assertEqual(path.parent, Path(tempfile.gettempdir()))
+        if sys.platform != "win32" and os.environ.get("XDG_RUNTIME_DIR"):
+            expected_parent = Path(os.environ["XDG_RUNTIME_DIR"])
+        else:
+            expected_parent = Path(tempfile.gettempdir())
+        self.assertEqual(path.parent, expected_parent)
         self.assertRegex(path.name, r"^whisperlive-.+\.lock$")
 
 

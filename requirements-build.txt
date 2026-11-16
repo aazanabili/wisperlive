@@ -1,0 +1,11 @@
+# Build-time dependencies for the PyInstaller release bundles (Windows and Linux jobs).
+# - pyinstaller is pinned to the already-frozen version for reproducible builds.
+# - pyinstaller-hooks-contrib IS pinned because its hooks directly determine
+#   what gets collected into the exe (build-content-affecting); the installed
+#   pin satisfies pyinstaller's own requirement (>=2026.6).
+# - pyinstaller's other transitive deps (altgraph, pefile, pywin32-ctypes,
+#   packaging, setuptools) stay unpinned: they are implementation details
+#   constrained by pyinstaller's own metadata and do not shape bundle content.
+-r requirements.txt
+pyinstaller==6.22.2
+pyinstaller-hooks-contrib==2026.7

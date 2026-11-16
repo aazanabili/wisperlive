@@ -26,6 +26,12 @@ jobs:
       with:
         python-version: '3.11'
 
+    # OURS (hygiene): validate merged requirements resolve on BOTH OSes before any build.
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r requirements.txt
+
     - name: Run unit tests
       run: python -m unittest discover -v
 
@@ -42,10 +48,11 @@ jobs:
       with:
         python-version: '3.11' # Good stable version for pyinstaller
 
+    # OURS: was an ad-hoc `pip install google-generativeai keyboard ...` upstream.
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install google-generativeai keyboard sounddevice soundfile pyperclip pystray Pillow pyinstaller
+        python -m pip install -r requirements-build.txt
 
     - name: Stamp release version
       if: startsWith(github.ref, 'refs/tags/v')
@@ -55,13 +62,13 @@ jobs:
     - name: Build EXE with PyInstaller
       run: |
         pyinstaller -y WhisperLive.spec
-        
-    - name: Rename Executable
+
+    # OURS: replaces upstream's dead "Rename Executable" step (E3).
+    - name: Verify build output
       run: |
-        if (Test-Path "dist\WhisperLive.exe") {
-          Write-Host "WhisperLive.exe already named correctly"
-        } elseif (Test-Path "dist\main.exe") {
-          Rename-Item -Path "dist\main.exe" -NewName "WhisperLive.exe"
+        if (-not (Test-Path "dist\WhisperLive.exe")) {
+          Write-Error "dist\WhisperLive.exe was not produced by the build."
+          exit 1
         }
 
     - name: Upload Artifact (For Manual Triggers)
@@ -78,7 +85,6 @@ jobs:
         files: dist/WhisperLive.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   build-linux:
     runs-on: ubuntu-latest
     needs: test
@@ -100,10 +106,13 @@ jobs:
         mkdir -p packaging/portaudio
         cp -L "$PA_PATH" packaging/portaudio/libportaudio.so.2
 
+    # OURS: upstream ran `pip install -r requirements.txt` - but THEIR freeze used to
+    # contain pyinstaller; after our split pyinstaller lives ONLY in
+    # requirements-build.txt, so the Linux build MUST install that file (mission Q: yes).
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        python -m pip install -r requirements-build.txt
 
     - name: Stamp release version
       if: startsWith(github.ref, 'refs/tags/v')
@@ -113,6 +122,17 @@ jobs:
     - name: Build binary with PyInstaller
       run: |
         pyinstaller -y WhisperLive.spec
+
+    # OURS: Linux analog of the Windows verify gate (answer to "verify step naming
+    # for Linux artifacts": same step name "Verify build output", Linux artifact
+    # name `dist/WhisperLive`). Today a missing binary only fails buried inside
+    # `cp` of the Stage step with a cryptic error.
+    - name: Verify build output
+      run: |
+        if [ ! -f "dist/WhisperLive" ]; then
+          echo "dist/WhisperLive was not produced by the build." >&2
+          exit 1
+        fi
 
     - name: Stage package payload
       run: |
@@ -158,6 +178,20 @@ jobs:
         printf '#!/bin/sh\nexec "$(dirname "$0")/usr/bin/whisperlive" "$@"\n' > AppDir/AppRun
         chmod +x AppDir/AppRun
         ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir dist-pkg/WhisperLive-x86_64.AppImage
+
+    # OURS: guards release completeness. softprops/action-gh-release only WARNS when a
+    # `files:` glob matches nothing - a silent partial release would otherwise ship.
+    - name: Verify release assets
+      run: |
+        shopt -s nullglob
+        assets=(dist-pkg/*.deb dist-pkg/*.rpm dist-pkg/*.pkg.tar.zst dist-pkg/*.AppImage)
+        if [ "${#assets[@]}" -lt 4 ]; then
+          echo "Expected 4 release assets (deb, rpm, pkg.tar.zst, AppImage), found ${#assets[@]}:" >&2
+          printf '  %s\n' "${assets[@]}" >&2
+          exit 1
+        fi
+        printf 'Release assets:\n'
+        printf '  %s\n' "${assets[@]}"
 
     - name: Upload Artifact (For Manual Triggers)
       if: github.event_name == 'workflow_dispatch'

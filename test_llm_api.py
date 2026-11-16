@@ -4,10 +4,18 @@ These tests mock ``urllib.request.urlopen`` so no network access happens and
 exercise the request shape, error classification, and the guarantee that
 every request is bounded by an explicit timeout (the regression guard for
 the app-freezing hangs).
+
+Reconciliation (core section 12.7): the ``FakeResponse.read`` cursor mirrors
+the adopted H5 chunked-read loop, and the seven converted/hardening cases
+(H1 audio cap, H2 boundary, H3 redaction, H4 credential-URL rejection, H7
+HTTP 400/429 mapping) carry the survival of the deleted ``test_gemini_api``
+suite (disposition map in core section 12.8 / the Phase 5 QA report).
 """
 
 import base64
+import io
 import json
+import logging
 import os
 import tempfile
 import unittest
@@ -23,11 +31,17 @@ class FakeResponse:
             self.body = bytes(payload)
         else:
             self.body = json.dumps(payload).encode("utf-8")
+        # H5 cursor: sequential chunk reads must advance, never replay.
+        self._pos = 0
 
     def read(self, limit=-1):
         if limit is None or limit < 0:
-            return self.body
-        return self.body[:limit]
+            chunk = self.body[self._pos:]
+            self._pos = len(self.body)
+            return chunk
+        chunk = self.body[self._pos:self._pos + limit]
+        self._pos += len(chunk)
+        return chunk
 
     def __enter__(self):
         return self
@@ -139,6 +153,23 @@ class FetchModelsTests(unittest.TestCase):
         timeout = urlopen.call_args.kwargs.get("timeout")
         self.assertIsInstance(timeout, (int, float))
         self.assertGreater(timeout, 0)
+
+    # core 12.7.5 (H4): a credential- or query-bearing base URL is rejected
+    # BEFORE any network call - secret-leak vector + string-concat bug.
+    def test_base_url_with_userinfo_or_query_is_rejected(self):
+        credential_urls = (
+            "https://user:pass@example.com/v1",
+            "https://example.com/v1?key=TOPSECRET",
+            "https://example.com/v1#TOPSECRET",
+        )
+        for base_url in credential_urls:
+            with self.subTest(base_url=base_url):
+                with mock.patch("urllib.request.urlopen") as urlopen:
+                    with self.assertRaisesRegex(
+                        llm_api.LLMConfigError, "must not contain credentials or a query string"
+                    ):
+                        llm_api.fetch_models(base_url, "sk-test")
+                urlopen.assert_not_called()  # rejected client-side, no request is issued
 
 
 class ProcessAudioTests(unittest.TestCase):
@@ -255,6 +286,141 @@ class ProcessAudioTests(unittest.TestCase):
         timeout = urlopen.call_args.kwargs.get("timeout")
         self.assertIsInstance(timeout, (int, float))
         self.assertGreater(timeout, 0)
+
+    # --- core 12.7 ADDs: converted test_gemini_api survival + H1-H4/H7 hardening ---
+
+    # core 12.7.1 (H1; re-added from test_gemini_api): unreadable/missing wav is
+    # a user-safe error raised BEFORE any network call.
+    def test_missing_audio_file_maps_to_user_error(self):
+        missing = os.path.join(self.temp.name, "does-not-exist.wav")
+
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(llm_api.LLMError) as ctx:
+                llm_api.process_audio(missing, "French", "sk-test", "https://example.com/v1", "gpt-audio")
+
+        self.assertEqual(str(ctx.exception), "The recorded audio file could not be read. Please try again.")
+        self.assertIsInstance(ctx.exception.__cause__, OSError)  # cause preserved for diagnostics
+        urlopen.assert_not_called()
+
+    # core 12.7.2 (H1 cap): recordings over the shipped 20 MiB cap are refused
+    # before base64 encoding and before any network call.
+    def test_audio_file_too_large_is_rejected(self):
+        self.assertEqual(llm_api.MAX_AUDIO_BYTES, 20 * 1024 * 1024)  # shipped contract
+        big = os.path.join(self.temp.name, "huge.wav")
+        with open(big, "wb") as handle:
+            handle.write(b"\x00" * (llm_api.MAX_AUDIO_BYTES + 1))
+
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(llm_api.LLMError) as ctx:
+                llm_api.process_audio(big, "French", "sk-test", "https://example.com/v1", "gpt-audio")
+
+        self.assertIn("too large to process (over 20 MB)", str(ctx.exception))
+        urlopen.assert_not_called()
+
+    # core 12.7.3 (H2; re-added from test_gemini_api): an unexpected exception at
+    # the boundary translates to the generic message, logs once, leaks nothing.
+    def test_unexpected_exception_maps_to_generic_message(self):
+        error = RuntimeError("internal detail")
+        with mock.patch.object(llm_api, "_request_json", side_effect=error), \
+                mock.patch.object(llm_api.logger, "exception") as logged:
+            with self.assertRaises(llm_api.LLMError) as ctx:
+                llm_api.process_audio(
+                    self.audio_path, "French", "sk-test", "https://example.com/v1", "gpt-audio"
+                )
+
+        self.assertEqual(str(ctx.exception), "Something went wrong while contacting the provider.")
+        self.assertIs(ctx.exception.__cause__, error)
+        logged.assert_called_once()
+        self.assertNotIn("internal detail", str(ctx.exception))
+
+    # core 12.7.4 (H3; supersedes gemini test_no_transcript_content_is_logged):
+    # neither transcript, API key, nor a URL credential may reach any log record.
+    def test_no_transcript_or_credentials_in_logs(self):
+        sentinel = "SENTINEL_TRANSCRIPT_7f3aX"
+        key = "sk-SECRET-9988"
+        captured = []
+
+        class Capture(logging.Handler):
+            def emit(self, record):
+                captured.append(record.getMessage())
+
+        target = logging.getLogger("llm_api")
+        handler = Capture()
+        old_level = target.level
+        target.addHandler(handler)
+        target.setLevel(logging.DEBUG)
+        try:
+            # both pipeline stages, success path, distinctive transcript + key
+            with mock.patch("urllib.request.urlopen", side_effect=[
+                FakeResponse({"choices": [{"message": {"content": sentinel}}]}),
+                FakeResponse({"choices": [{"message": {"content": "CLEAN OUTPUT"}}]}),
+            ]):
+                text = llm_api.process_audio(
+                    self.audio_path, "French", key, "https://example.com/v1", "gpt-audio"
+                )
+            self.assertEqual(text, "CLEAN OUTPUT")
+
+            # failure path with the same key
+            failure = urllib.error.HTTPError(
+                "https://example.com/v1/chat/completions", 500, "Server Error", None, None
+            )
+            with mock.patch("urllib.request.urlopen", side_effect=failure):
+                with self.assertRaises(llm_api.LLMError):
+                    llm_api.process_audio(
+                        self.audio_path, "French", key, "https://example.com/v1", "gpt-audio"
+                    )
+
+            # ?key=-style credential URL: rejected client-side (H4), never logged
+            with self.assertRaises(llm_api.LLMConfigError):
+                llm_api.fetch_models("https://example.com/v1?key=TOPSECRET", key)
+        finally:
+            target.removeHandler(handler)
+            target.setLevel(old_level)
+
+        self.assertGreater(len(captured), 0, "capture must be non-vacuous")
+        for message in captured:
+            self.assertNotIn(sentinel, message)
+            self.assertNotIn(key, message)
+            self.assertNotIn("TOPSECRET", message)
+        # direct proof of the redaction helper: userinfo, query, fragment stripped
+        self.assertEqual(
+            llm_api._safe_url_for_log("https://user:pass@example.com/v1?key=TOPSECRET#frag"),
+            "https://example.com/v1",
+        )
+
+    # core 12.7.6 (H7, merged gemini blocked-prompt/value-error/invalid-argument
+    # cases): HTTP 400 maps to a user-safe message with NO body echo and is not
+    # misclassified as auth/network.
+    def test_http_400_maps_to_user_safe_message_without_body_echo(self):
+        body = b'{"error": {"message": "BLOCKED_PROMPT_DETAIL"}}'
+        error = urllib.error.HTTPError(
+            "https://example.com/v1/chat/completions", 400, "Bad Request", None, io.BytesIO(body)
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(llm_api.LLMError) as ctx:
+                llm_api.process_audio(
+                    self.audio_path, "French", "sk-test", "https://example.com/v1", "gpt-audio"
+                )
+
+        message = str(ctx.exception)
+        self.assertIn("HTTP 400", message)                      # classified...
+        self.assertNotIn("BLOCKED_PROMPT_DETAIL", message)      # ...without echoing the body
+        self.assertNotIn("blocked", message.lower())
+        self.assertNotIsInstance(ctx.exception, (llm_api.LLMAuthError, llm_api.LLMNetworkError))
+
+    # core 12.7.7 (H7): HTTP 429 maps to the rate-limit message, not a network error.
+    def test_http_429_maps_to_rate_limit_message(self):
+        error = urllib.error.HTTPError(
+            "https://example.com/v1/chat/completions", 429, "Too Many Requests", None, None
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(llm_api.LLMError) as ctx:
+                llm_api.process_audio(
+                    self.audio_path, "French", "sk-test", "https://example.com/v1", "gpt-audio"
+                )
+
+        self.assertIn("rate-limiting", str(ctx.exception))
+        self.assertNotIsInstance(ctx.exception, llm_api.LLMNetworkError)
 
 
 class PostProcessTextTests(unittest.TestCase):

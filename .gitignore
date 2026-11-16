@@ -21,3 +21,10 @@ config.json
 temp_audio.wav
 test_audio.wav
 *.log
+
+# Agent factory governance (local-only)
+AGENTS.md
+opencode.json
+.opencode/
+.orchestrator/
+.worktrees/

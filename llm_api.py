@@ -17,12 +17,25 @@ Recording processing is a two-stage pipeline:
 
 ``process_audio`` runs both stages back to back for callers that just want
 the finished text.
+
+Retry & key policy:
+
+* **No auto-retry on completions (H6).** ``POST /chat/completions`` is
+  non-idempotent — an automatic retry may bill the same work twice. The UI
+  "try again" is the control. The idempotent ``GET /models`` in
+  :func:`fetch_models` performs exactly ONE bounded retry on a network
+  failure.
+* **The API key is OPTIONAL (D2).** Local OpenAI-compatible providers
+  (Ollama, llama.cpp, …) work keyless: when the key is empty the
+  ``Authorization`` header is simply omitted.
 """
 
 import base64
 import json
 import logging
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from version import APP_VERSION
@@ -36,6 +49,11 @@ GENERATION_TIMEOUT = 120
 # Refuse to buffer unbounded provider responses (a runaway endpoint must not
 # defeat the request timeout by streaming forever).
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+# H5: the body is read in bounded chunks so its TOTAL duration can be
+# deadline-checked (a per-socket timeout alone only bounds single recvs).
+READ_CHUNK_BYTES = 64 * 1024
+# H1: refuse absurd recordings before base64-encoding them into a request.
+MAX_AUDIO_BYTES = 20 * 1024 * 1024
 
 # Sentinel output language: clean the transcript but do not translate it.
 NO_TRANSLATION = "Original language"
@@ -87,6 +105,22 @@ class LLMNetworkError(LLMError):
     """The provider could not be reached, timed out, or dropped the link."""
 
 
+def _safe_url_for_log(url: str) -> str:
+    """Return scheme + host + path only: drop userinfo, query, and fragment.
+
+    Custom providers accept ``?key=...`` style URLs — the log must never
+    contain a credential (H3, app-wide privacy policy).
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        return f"{parts.scheme}://{host}{parts.path}"
+    except ValueError:  # malformed userinfo/port — never echo it back
+        return "<redacted url>"
+
+
 def _endpoint(base_url, suffix):
     base = (base_url or "").strip()
     if not base:
@@ -95,6 +129,13 @@ def _endpoint(base_url, suffix):
     if not separator or scheme.lower() not in ("http", "https") or not rest.strip():
         raise LLMConfigError(
             f"Provider Base URL is invalid: {base_url!r}. Expected a URL like https://api.openai.com/v1"
+        )
+    # H4: credentials/query in a base URL are both a secret-leak vector and a
+    # correctness bug (string concatenation would corrupt query-bearing URLs).
+    parsed = urllib.parse.urlsplit(base)
+    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+        raise LLMConfigError(
+            "Provider Base URL must not contain credentials or a query string. Put the API key in the API key field."
         )
     return base.rstrip("/") + suffix
 
@@ -110,16 +151,55 @@ def _build_request(url, api_key, payload=None):
     return urllib.request.Request(url, data=data, headers=headers)
 
 
+def _read_body(response, timeout, description):
+    """Read the response body under a total wall-clock deadline (H5).
+
+    ``urlopen(timeout=...)`` bounds each blocking socket operation, but a
+    slow-trickle response could otherwise outlive ``timeout`` in aggregate.
+    Honest bound: total wait <= ``timeout`` + one socket read (every recv is
+    itself already bounded by the socket timeout). End of body is an empty
+    read OR a short read: ``http.client.HTTPResponse.read(amt)`` returns
+    fewer than ``amt`` bytes only at end-of-body (verified for both the
+    content-length and chunked paths).
+    """
+    deadline = time.monotonic() + timeout
+    chunks = []
+    total = 0
+    while True:
+        if time.monotonic() > deadline:
+            raise LLMNetworkError(
+                f"The provider timed out after {timeout} seconds. Check the URL and network."
+            )
+        chunk = response.read(READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > MAX_RESPONSE_BYTES:
+            raise LLMError(f"The provider response for the {description} request is too large.")
+        if len(chunk) < READ_CHUNK_BYTES:
+            break  # end of body (short read)
+    return b"".join(chunks)
+
+
 def _request_json(request, timeout, description):
     """Perform a bounded request and return the decoded JSON body."""
-    logger.info("Requesting %s from %s", description, request.full_url)
+    logger.info("Requesting %s from %s", description, _safe_url_for_log(request.full_url))
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read(MAX_RESPONSE_BYTES + 1)
+            body = _read_body(response, timeout, description)
     except urllib.error.HTTPError as error:
         if error.code in (401, 403):
             raise LLMAuthError(
                 f"Authentication failed (HTTP {error.code}). Check the API key in Settings."
+            ) from error
+        if error.code == 429:
+            raise LLMError(
+                "The provider is rate-limiting requests. Please wait a moment and try again."
+            ) from error
+        if error.code >= 500:
+            raise LLMError(
+                f"The provider is having a temporary problem (HTTP {error.code}). Please try again."
             ) from error
         raise LLMError(f"The provider returned HTTP {error.code} for the {description} request.") from error
     except urllib.error.URLError as error:
@@ -132,8 +212,6 @@ def _request_json(request, timeout, description):
     except OSError as error:
         raise LLMNetworkError(f"Could not reach the provider: {error}") from error
 
-    if len(body) > MAX_RESPONSE_BYTES:
-        raise LLMError(f"The provider response for the {description} request is too large.")
     try:
         return json.loads(body.decode("utf-8"))
     except (UnicodeError, ValueError):
@@ -141,18 +219,32 @@ def _request_json(request, timeout, description):
 
 
 def fetch_models(base_url, api_key="", timeout=MODELS_TIMEOUT):
-    """Return the sorted, de-duplicated model ids offered by the provider."""
-    request = _build_request(_endpoint(base_url, "/models"), api_key)
-    payload = _request_json(request, timeout, "model list")
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, list):
-        raise LLMError("The provider returned an unexpected model list format.")
-    models = set()
-    for item in data:
-        model_id = item.get("id") if isinstance(item, dict) else item
-        if isinstance(model_id, str) and model_id.strip():
-            models.add(model_id.strip())
-    return sorted(models)
+    """Return the sorted, de-duplicated model ids offered by the provider.
+
+    Idempotent GET: exactly ONE bounded retry on a network failure (H6).
+    """
+    try:
+        request = _build_request(_endpoint(base_url, "/models"), api_key)
+        try:
+            payload = _request_json(request, timeout, "model list")
+        except LLMNetworkError:
+            # Safe to retry once: GET /models is idempotent and never billed.
+            payload = _request_json(request, timeout, "model list")
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise LLMError("The provider returned an unexpected model list format.")
+        models = set()
+        for item in data:
+            model_id = item.get("id") if isinstance(item, dict) else item
+            if isinstance(model_id, str) and model_id.strip():
+                models.add(model_id.strip())
+        return sorted(models)
+    except LLMError:
+        raise
+    except Exception as error:
+        # H2 boundary: always translate, never continue corrupted state.
+        logger.exception("Unexpected error during model list request")
+        raise LLMError("Something went wrong while contacting the provider.") from error
 
 
 def _require_model(model):
@@ -194,30 +286,47 @@ def transcribe_audio(audio_path, api_key="", base_url="", model="", timeout=GENE
     chat-completions shape for audio input.  No cleanup or translation
     happens here; that belongs to :func:`post_process_text`.
     """
-    model_name = _require_model(model)
-    url = _endpoint(base_url, "/chat/completions")
-    with open(audio_path, "rb") as handle:
-        audio_data = handle.read()
-    payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _TRANSCRIBE_PROMPT},
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": base64.b64encode(audio_data).decode("ascii"),
-                            "format": "wav",
+    try:
+        model_name = _require_model(model)
+        url = _endpoint(base_url, "/chat/completions")
+        # H1: file-read failures and absurd recordings surface as user-safe errors.
+        try:
+            with open(audio_path, "rb") as handle:
+                audio_data = handle.read(MAX_AUDIO_BYTES + 1)
+        except OSError as error:
+            logger.warning("Audio file read failed: %s", type(error).__name__)
+            raise LLMError("The recorded audio file could not be read. Please try again.") from error
+        if len(audio_data) > MAX_AUDIO_BYTES:
+            logger.warning("Audio file too large: %d bytes", len(audio_data))
+            raise LLMError(
+                "The recording is too large to process (over 20 MB). Please record a shorter clip."
+            )
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _TRANSCRIBE_PROMPT},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": base64.b64encode(audio_data).decode("ascii"),
+                                "format": "wav",
+                            },
                         },
-                    },
-                ],
-            }
-        ],
-    }
-    response = _request_json(_build_request(url, api_key, payload), timeout, "transcription")
-    return _completion_text(response)
+                    ],
+                }
+            ],
+        }
+        response = _request_json(_build_request(url, api_key, payload), timeout, "transcription")
+        return _completion_text(response)
+    except LLMError:
+        raise
+    except Exception as error:
+        # H2 boundary: translate unknown failures without leaking internals.
+        logger.exception("Unexpected error during transcription")
+        raise LLMError("Something went wrong while contacting the provider.") from error
 
 
 def post_process_text(raw_text, target_language, api_key="", base_url="", model="", timeout=GENERATION_TIMEOUT):
@@ -228,18 +337,26 @@ def post_process_text(raw_text, target_language, api_key="", base_url="", model=
     as clean prose or bullets.  Translation runs only when a target language
     is selected; otherwise the cleaned text stays in the spoken language.
     """
-    model_name = _require_model(model)
-    url = _endpoint(base_url, "/chat/completions")
-    prompt = _POST_PROCESS_PROMPT_TEMPLATE.format(
-        translation_instruction=_translation_instruction(target_language),
-        raw_text=raw_text,
-    )
-    payload = {
-        "model": model_name,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    response = _request_json(_build_request(url, api_key, payload), timeout, "post-processing")
-    return _completion_text(response)
+    try:
+        model_name = _require_model(model)
+        url = _endpoint(base_url, "/chat/completions")
+        prompt = _POST_PROCESS_PROMPT_TEMPLATE.format(
+            translation_instruction=_translation_instruction(target_language),
+            raw_text=raw_text,
+        )
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        response = _request_json(_build_request(url, api_key, payload), timeout, "post-processing")
+        return _completion_text(response)
+    except LLMError:
+        raise
+    except Exception as error:
+        # H2 boundary: a post-processing failure never falls back to the raw
+        # transcript (pipeline invariant), it always surfaces as LLMError.
+        logger.exception("Unexpected error during post-processing")
+        raise LLMError("Something went wrong while contacting the provider.") from error
 
 
 def process_audio(audio_path, target_language, api_key="", base_url="", model="", timeout=GENERATION_TIMEOUT):
