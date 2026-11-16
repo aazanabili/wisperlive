@@ -80,6 +80,8 @@ class SplitModuleSmokeTests(unittest.TestCase):
             "settings_provider_view", "settings_keys_view",
             "settings_dictation_view", "settings_models_view",
             "session_dialogs", "smoke",
+            # --- F-2 Option A: the pure consent leaf (acyclic: no main import) ---
+            "gemini_gate",
         )
         for module in modules:
             path = os.path.join(root_dir, module + ".py")

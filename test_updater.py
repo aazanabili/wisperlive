@@ -58,6 +58,8 @@ APP_MODULES = (
     "settings_models_view",
     "session_dialogs",
     "smoke",
+    # --- F-2 Option A: the ONE Gemini consent rule (pure policy leaf) ---
+    "gemini_gate",
 )
 
 # `smoke` is a CLI self-check entry point: printing its report IS its output
@@ -124,7 +126,7 @@ class SecretsAndLogScrapeTests(unittest.TestCase):
         "typer_actor", "focus_guard", "polish_engine", "model_store",
         "live_local_engine", "live_cloud_engine", "settings_provider_view",
         "settings_keys_view", "settings_dictation_view", "settings_models_view",
-        "session_dialogs", "smoke",
+        "session_dialogs", "smoke", "gemini_gate",
     )
     FORBIDDEN_ARG_NAMES = frozenset((
         "text", "transcript", "api_key", "key", "secret", "token", "pcm",

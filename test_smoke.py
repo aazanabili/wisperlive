@@ -51,6 +51,17 @@ class SmokeRunTests(unittest.TestCase):
             with self.subTest(module=name):
                 self.assertIsNotNone(importlib.import_module(name))
 
+    def test_gemini_gate_leaf_is_importable_via_core_import_loop(self):
+        # F-2 Option A: smoke.CORE_MODULES is production-owned, so the test-side
+        # pin asserts the consent leaf imports cleanly AND is pulled in by a
+        # pinned core module (dictation_session) — the strict smoke loop then
+        # verifies its import health transitively on every `--smoke` run.
+        import importlib
+        self.assertIn("dictation_session", smoke.CORE_MODULES)
+        self.assertIsNotNone(importlib.import_module("gemini_gate"))
+        importlib.import_module("dictation_session")
+        self.assertIn("gemini_gate", sys.modules)
+
     def test_absent_ml_extras_are_skipped_never_failed(self):
         code, output = run_capture(smoke.run)
         self.assertEqual(code, 0)

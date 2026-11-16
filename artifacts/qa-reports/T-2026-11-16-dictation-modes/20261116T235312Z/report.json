@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "task_id": "T-2026-11-16-dictation-modes",
+  "lineage_id": "L-dictation-modes-1",
+  "run_id": "20261116T235312Z",
+  "supersedes_run_id": "20261116T230125Z",
+  "run_kind": "QA GATE — authorized test-extension for F-2 Option A (gemini_gate consent leaf)",
+  "started_at_utc": "2026-11-16T23:53:12Z",
+  "role": "qa-test-assurance",
+  "risk_tier": "Tier 3 (auth/consent gate on cloud provider traffic)",
+  "policy_version": "3.0.0-OPENCODE",
+  "runner": "venv\\Scripts\\python.exe -m unittest discover -p \"test_*.py\"",
+  "platform": "win32 (Python 3.14 venv; 10 env-gated skips unchanged from baseline)",
+  "state_fingerprint": {
+    "base_revision": "58281ce5c6d3e61d72b5adae6e3bdbdf2a185471",
+    "revision_after": "58281ce5c6d3e61d72b5adae6e3bdbdf2a185471",
+    "silent_commit_detected": false,
+    "pre_run_dirty_state": "worker-authorized production edits: chunked_engine.py, dictation_session.py, polish_engine.py, settings_dictation_view.py, settings_keys_view.py, settings_view.py + untracked gemini_gate.py",
+    "qa_delta_this_turn": {
+      "modified_test_files": ["test_updater.py", "test_views_startup_split.py", "test_smoke.py"],
+      "created_test_files": ["test_gemini_gate.py"],
+      "production_files_touched_by_qa": "NONE",
+      "governance_files_touched_by_qa": "NONE"
+    },
+    "ownership_gate": "PASS (tests + artifacts scope only; no commit/reset/clean/stash; no .env or credential file read)"
+  },
+  "totals": {
+    "baseline_before_extension": 632,
+    "final_tests": 649,
+    "final_pass": 639,
+    "final_skips": 10,
+    "final_fail": 0,
+    "final_errors": 0,
+    "new_tests_added": 17,
+    "runs_executed_this_gate": 3,
+    "deterministic": true,
+    "flaky_result_observed": false,
+    "skip_note": "10 env-gated skips = unchanged baseline (X11/Linux/single-instance + 1 HAVE_EXTRAS-gated); none in the extended areas"
+  },
+  "test_extension": {
+    "module_guards_extended": [
+      "test_updater.APP_MODULES += gemini_gate (no-print AST guard now covers the leaf)",
+      "test_updater.NewSecretsAndLogScrapeTests.NEW_DICTATION_MODULES += gemini_gate (D11 no-transcript/key-logger AST guard)",
+      "test_views_startup_split.test_no_split_module_imports_main acyclicity set += gemini_gate",
+      "test_smoke.test_gemini_gate_leaf_is_importable_via_core_import_loop (test-side pin: gemini_gate imports cleanly and is pulled in transitively by pinned core module dictation_session; production smoke.CORE_MODULES is production-owned and was NOT modified)"
+    ],
+    "new_suite": "test_gemini_gate.py (16 tests)",
+    "pins_covered": [
+      "routes_to_gemini: preset id 'google-gemini' / display label 'Google Gemini' / Gemini host base URL / cloned Custom Gemini URL / subdomain+port variants -> True; OpenAI, Groq, ollama-local, localhost -> False; lookalike-host suffix/prefix spoofing and non-string inputs -> False (fail-closed, never raises)",
+      "require_gemini_consent: raises ConsentRequiredError (engine_id=google-gemini, 'data notice' copy) without consent AND without paid flag, incl. M20 coercion-proof strings/1; passes with EITHER literal flag; honors D10 SessionConfig.gemini_enabled snapshot",
+      "require_gemini_route: raises on Gemini-bound routes without consent (preset id and cloned Custom URL), silent on OpenAI/localhost/empty routes",
+      "save_route: 'live' for gemini-live without consent, 'provider' for Gemini-bound provider route without consent, '' with either consent flag or for non-Gemini routes; never raises on malformed inputs",
+      "gate contract: GEMINI_PROVIDER_ID/GEMINI_ENGINE_ID constants + pure-leaf (no tkinter/urllib/requests surface)"
+    ]
+  },
+  "per_suite_delta": [
+    {"suite": "test_gemini_gate", "tests": 16, "result": "OK", "note": "NEW"},
+    {"suite": "test_smoke", "tests": 12, "result": "OK", "note": "+1 pin (was 11)"},
+    {"suite": "test_updater", "tests": 4, "result": "OK", "note": "guard lists extended, same test count"},
+    {"suite": "test_views_startup_split", "tests": 7, "result": "OK", "note": "acyclicity set extended, same test count"}
+  ],
+  "gates": {
+    "G5_secrets_privacy": {"verdict": "PASS", "note": "gemini_gate now inside the D11 static AST log-scrape guard; consent copy/fail-closed pins green"},
+    "G6_packaging": {"verdict": "PASS", "note": "42-module exists+acyclicity (no-main-import) green incl. gemini_gate; smoke core import loop green"}
+  },
+  "defects_found": [],
+  "status": "PASS",
+  "status_short": "PASS_WITH_SKIPS",
+  "status_rationale": "8-state precedence: no STALE/FAIL/FLAKY/TIMEOUT/PLATFORM_REQUIRED/BLOCKED/PARTIAL condition — 3 consecutive full runs identical (632 baseline run + 2 post-extension runs): 649 tests / 639 pass / 0 fail / 0 errors / 10 pre-declared env-gated skips; HEAD unchanged before/after (no silent commit), QA delta limited to 3 test-file edits + 1 new test file + this report; defects_found empty.",
+  "artifacts": {
+    "report_path": "artifacts/qa-reports/T-2026-11-16-dictation-modes/20261116T235312Z/report.json"
+  }
+}
