@@ -10,7 +10,9 @@ from unittest.mock import patch
 import config_manager
 
 
-class ConfigManagerTests(unittest.TestCase):
+class _EnvHarness(unittest.TestCase):
+    """Shared temp-config environment (paths/env patched per test)."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -39,6 +41,9 @@ class ConfigManagerTests(unittest.TestCase):
         self.paths.stop()
         self.env.stop()
         self.temp.cleanup()
+
+
+class ConfigManagerTests(_EnvHarness):
 
     def test_path_does_not_follow_cwd(self):
         config_manager.save_config({"api_key": "secret"})
@@ -282,6 +287,196 @@ class ConfigManagerTests(unittest.TestCase):
             self.assertTrue(config_manager.save_config({"api_key": "atomic"}))
             replace.assert_called_once()
         self.assertEqual(list(config_manager.get_config_path().parent.glob(".config.json.*")), [])
+
+
+class DictationKeyNormalizationTests(_EnvHarness):
+    """M13-M23 at the CONFIG boundary (plan 2.3): every load normalizes the
+    dictation keys to fail-closed defaults while unknown keys round-trip."""
+
+    def _write(self, payload):
+        target = config_manager.get_config_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload), encoding="utf-8")
+        return target
+
+    def test_garbage_dictation_values_load_as_shipped_defaults(self):
+        self._write({
+            "dictation_mode": "bogus", "cleanup_mode": "", "model_size": 42,
+            "live_engine": "gpt-x", "polish_mode": " insert ",
+            "chunked_engine": "unknown-engine", "chunked_asr_model": 7,
+            "cleanup_model": None, "model_store_dir": [],
+            "gemini_consent": "yes", "gemini_paid_key_confirmed": 1,
+            "first_run_guidance_seen": "true",
+            "local_models": {"fw": "downloading"},       # crash residue -> dropped (M21)
+            "quota_limits": {"groq-whisper.day": -5, "x": True},
+        })
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["dictation_mode"], "local")       # U4
+        self.assertEqual(loaded["cleanup_mode"], "cloud")         # D2
+        self.assertEqual(loaded["model_size"], "auto")
+        self.assertEqual(loaded["live_engine"], "local")
+        self.assertEqual(loaded["polish_mode"], "insert")         # U3
+        self.assertEqual(loaded["chunked_engine"], "")            # never dangling
+        self.assertEqual(loaded["chunked_asr_model"], "")
+        self.assertIs(loaded["gemini_consent"], False)            # literal True only
+        self.assertIs(loaded["gemini_paid_key_confirmed"], False)
+        self.assertIs(loaded["first_run_guidance_seen"], False)
+        self.assertEqual(loaded["local_models"], {})
+        self.assertEqual(loaded["quota_limits"], {})
+
+    def test_valid_dictation_values_pass_through_byte_identical(self):
+        self._write({
+            "dictation_mode": "live", "cleanup_mode": "local-ollama",
+            "model_size": "standard", "live_engine": "gemini-live",
+            "polish_mode": "replace-experimental", "chunked_engine": "groq-whisper",
+            "chunked_asr_model": "whisper-large-v3", "cleanup_model": "qwen3",
+            "model_store_dir": "/srv/models",
+            "gemini_consent": True, "gemini_paid_key_confirmed": False,
+            "first_run_guidance_seen": True,
+            "local_models": {"faster-whisper-base": "ready"},
+            "quota_limits": {"groq-whisper.day": 500},
+        })
+        loaded = config_manager.load_config()
+        for key, expected in {
+                "dictation_mode": "live", "cleanup_mode": "local-ollama",
+                "model_size": "standard", "live_engine": "gemini-live",
+                "polish_mode": "replace-experimental",
+                "chunked_engine": "groq-whisper",
+                "chunked_asr_model": "whisper-large-v3",
+                "cleanup_model": "qwen3", "model_store_dir": "/srv/models",
+        }.items():
+            with self.subTest(key=key):
+                self.assertEqual(loaded[key], expected)
+        self.assertIs(loaded["gemini_consent"], True)
+        self.assertIs(loaded["first_run_guidance_seen"], True)
+        self.assertEqual(loaded["quota_limits"], {"groq-whisper.day": 500})
+
+    def test_defaults_are_created_with_fresh_containers_per_load(self):
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["local_models"], {})
+        self.assertEqual(loaded["quota_limits"], {})
+        loaded["local_models"]["fw"] = "ready"
+        loaded["quota_limits"]["k"] = 1
+        self.assertEqual(config_manager.DEFAULT_CONFIG["local_models"], {})
+        self.assertEqual(config_manager.DEFAULT_CONFIG["quota_limits"], {})
+        again = config_manager.load_config()
+        self.assertEqual(again["local_models"], {})
+        self.assertEqual(again["quota_limits"], {})
+
+
+class SecretMapBoundaryTests(_EnvHarness):
+    """K1-K8 at the config boundary, incl. G5 DPAPI/base64 evidence."""
+
+    def _write(self, payload):
+        target = config_manager.get_config_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload), encoding="utf-8")
+        return target
+
+    def test_k4_dual_write_roundtrip_and_per_vendor_slots(self):
+        self.assertTrue(config_manager.save_config(
+            {"api_key": "sk-alpha", "provider": "openai", "model": "m"}))
+        raw = config_manager.get_config_path().read_text(encoding="utf-8")
+        self.assertNotIn("sk-alpha", raw)                       # never plaintext
+        data = json.loads(raw)
+        self.assertIn("api_key_protected", data)                # legacy blob (K4)
+        self.assertIn("api_keys_protected", data)               # vendor map
+        self.assertEqual(set(data["api_keys_protected"]), {"openai"})
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["api_key"], "sk-alpha")
+        self.assertEqual(config_manager.get_vendor_key(loaded, "openai"), "sk-alpha")
+        self.assertEqual(config_manager.get_vendor_key(loaded, "groq"), "")
+
+    def test_k2_legacy_migrates_under_the_current_provider_only(self):
+        # K7 misattribution guard: legacy api_key + provider=openai lands in
+        # the OPENAI slot ONLY — never groq/custom/other vendors.
+        target = self._write({"api_key": "legacy-1", "provider": "openai",
+                              "model": "m"})
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["api_key"], "legacy-1")
+        self.assertEqual(set(loaded["api_keys_protected"]), {"openai"})
+        self.assertNotIn("groq", loaded["api_keys_protected"])
+        # K8: rewritten once; the second load is byte-stable (idempotent)
+        first = target.read_text(encoding="utf-8")
+        self.assertNotIn("legacy-1", first)
+        self.assertEqual(config_manager.load_config()["api_key"], "legacy-1")
+        self.assertEqual(target.read_text(encoding="utf-8"), first)
+
+    def test_t11_provider_switch_derivation_k7(self):
+        # A3 T11: set_vendor_key A -> switch to B (empty slot) => derived
+        # api_key == "" (never vendor A's key); switch back => A restored.
+        # The per-switch key_var REHYDRATION (K7 dialog half) is pinned in
+        # test_settings_view; this pins the config-boundary mechanics it drives.
+        config_manager.save_config({"provider": "openai", "model": "m",
+                                    "api_key": "sk-A"})
+        cfg = config_manager.load_config()
+        self.assertEqual(cfg["api_key"], "sk-A")
+        self.assertEqual(set(cfg["api_keys_protected"]), {"openai"})
+
+        cfg["provider"] = "groq"                                # switch to B
+        cfg["api_key"] = config_manager.get_vendor_key(cfg, "groq")  # K7 (b)
+        self.assertEqual(cfg["api_key"], "")                    # never A's key
+        config_manager.save_config(cfg)
+        cfg = config_manager.load_config()
+        self.assertEqual(cfg["api_key"], "")                    # derived from B's slot
+        self.assertEqual(config_manager.get_vendor_key(cfg, "openai"), "sk-A")
+
+        cfg["provider"] = "openai"                              # switch back
+        cfg["api_key"] = config_manager.get_vendor_key(cfg, "openai")
+        config_manager.save_config(cfg)
+        cfg = config_manager.load_config()
+        self.assertEqual(cfg["api_key"], "sk-A")                # restored
+
+    def test_k7_vendor_helpers_at_the_boundary(self):
+        cfg = config_manager.load_config()
+        self.assertTrue(config_manager.set_vendor_key(cfg, "groq", "gsk-1"))
+        self.assertEqual(config_manager.get_vendor_key(cfg, "groq"), "gsk-1")
+        # current provider is custom -> derived api_key untouched by groq write
+        self.assertEqual(cfg["api_key"], "")
+        self.assertFalse(config_manager.set_vendor_key(cfg, "", "x"))
+        # corrupt slot fails only itself; others stay intact
+        cfg["api_keys_protected"] = {"openai": "dpapi:garbage",
+                                     "groq": config_manager._protect_api_key("gsk-1")}
+        with patch.object(config_manager.logger, "warning"):
+            self.assertEqual(config_manager.get_vendor_key(cfg, "openai"), "")
+        self.assertEqual(config_manager.get_vendor_key(cfg, "groq"), "gsk-1")
+
+    def test_g5_windows_dpapi_map_roundtrip_never_touches_plaintext(self):
+        def fake_dpapi(protect, value):
+            wrapped = b"wrapped:"
+            raw = value.encode("utf-8") if isinstance(value, str) else value
+            return wrapped + raw if protect else raw[len(wrapped):]
+        with patch.object(config_manager, "_IS_WINDOWS", True), patch.object(
+                config_manager, "_windows_dpapi", side_effect=fake_dpapi):
+            config_manager.save_config({"api_key": "dpapi-secret",
+                                        "provider": "openai", "model": "m"})
+            raw = config_manager.get_config_path().read_text(encoding="utf-8")
+            self.assertNotIn("dpapi-secret", raw)
+            data = json.loads(raw)
+            for envelope in [data["api_key_protected"],
+                             *data["api_keys_protected"].values()]:
+                self.assertTrue(envelope.startswith("dpapi:"))
+            loaded = config_manager.load_config()
+            self.assertEqual(loaded["api_key"], "dpapi-secret")
+            self.assertEqual(config_manager.get_vendor_key(loaded, "openai"),
+                             "dpapi-secret")
+
+    def test_g5_base64_fallback_warns_count_only_without_key_bytes(self):
+        # D9: non-Windows fallback -> ONE aggregated count warning per load,
+        # NEVER key material in the log record (G5 log-scrape evidence).
+        envelope = "base64:" + base64.b64encode(b"secret-linux-key").decode("ascii")
+        self._write({"api_keys_protected": {"openai": envelope, "groq": envelope}})
+        with patch.object(config_manager, "_IS_WINDOWS", False), patch.object(
+                config_manager.logger, "warning") as warning:
+            loaded = config_manager.load_config()
+        self.assertEqual(warning.call_count, 1)
+        text = warning.call_args[0][0] % warning.call_args[0][1:]
+        self.assertIn("2", text)                                # count only
+        self.assertIn("base64", text)
+        self.assertIn("obfuscation only", text)
+        self.assertNotIn("secret-linux-key", text)              # never key bytes
+        self.assertEqual(config_manager.get_vendor_key(loaded, "openai"),
+                         "secret-linux-key")                    # still usable
 
 
 if __name__ == "__main__":

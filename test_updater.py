@@ -13,7 +13,8 @@ import unittest
 import updater
 
 # Every production module in the merged `finish` tree (ui section c row 8),
-# extended by T-2026-11-16-provider-presets with the two pure modules.
+# extended by T-2026-11-16-provider-presets with the two pure modules, and by
+# T-2026-11-16-dictation-modes with EVERY new production module (plan 2.3).
 APP_MODULES = (
     "main",
     "views",
@@ -32,7 +33,36 @@ APP_MODULES = (
     "linux_hotkey",
     "single_instance",
     "updater",
+    # --- dictation-modes (T-2026-11-16) ---
+    "dictation_config",
+    "dictation_types",
+    "llm_errors",
+    "quota_ledger",
+    "model_manifest",
+    "session_state",
+    "dictation_session",
+    "pcm_stream",
+    "vad_segmenter",
+    "local_engine",
+    "chunked_engine",
+    "whisper_http",
+    "typer_actor",
+    "focus_guard",
+    "polish_engine",
+    "model_store",
+    "live_local_engine",
+    "live_cloud_engine",
+    "settings_provider_view",
+    "settings_keys_view",
+    "settings_dictation_view",
+    "settings_models_view",
+    "session_dialogs",
+    "smoke",
 )
+
+# `smoke` is a CLI self-check entry point: printing its report IS its output
+# contract (R-8c) — logging-only applies to the app modules.
+PRINT_EXEMPT = ("smoke",)
 
 
 class UpdaterTests(unittest.TestCase):
@@ -55,7 +85,8 @@ class UpdaterTests(unittest.TestCase):
 
 class NoPrintCallTests(unittest.TestCase):
     # section 8 case 2: permanent ast guard - no print()/traceback.print_exc()
-    # anywhere in the app modules (logging is the only output channel).
+    # anywhere in the app modules (logging is the only output channel; the one
+    # documented CLI exception lives in PRINT_EXEMPT).
     def test_no_print_calls_in_app_modules(self):
         root_dir = os.path.dirname(os.path.abspath(__file__))
         for module in APP_MODULES:
@@ -73,10 +104,86 @@ class NoPrintCallTests(unittest.TestCase):
                         name = node.func.attr
                     else:
                         continue
+                    if module in PRINT_EXEMPT:
+                        continue                    # documented CLI output contract
                     self.assertNotIn(
                         name, ("print", "print_exc"),
                         f"{module}.py:{node.lineno} still calls {name}()",
                     )
+
+
+class SecretsAndLogScrapeTests(unittest.TestCase):
+    """G5 (static): D11 no-transcript-logging contract over EVERY new module —
+    no logger call may reference transcript/key/audio-bearing names, and no
+    f-string may be interpolated directly into a log call."""
+
+    NEW_DICTATION_MODULES = (
+        "dictation_config", "dictation_types", "llm_errors", "quota_ledger",
+        "model_manifest", "session_state", "dictation_session", "pcm_stream",
+        "vad_segmenter", "local_engine", "chunked_engine", "whisper_http",
+        "typer_actor", "focus_guard", "polish_engine", "model_store",
+        "live_local_engine", "live_cloud_engine", "settings_provider_view",
+        "settings_keys_view", "settings_dictation_view", "settings_models_view",
+        "session_dialogs", "smoke",
+    )
+    FORBIDDEN_ARG_NAMES = frozenset((
+        "text", "transcript", "api_key", "key", "secret", "token", "pcm",
+        "audio", "payload", "body", "frame", "words", "phrase", "clipboard",
+    ))
+
+    def test_no_logger_call_can_carry_transcript_or_key_material(self):
+        root_dir = os.path.dirname(os.path.abspath(__file__))
+        for module in self.NEW_DICTATION_MODULES:
+            path = os.path.join(root_dir, module + ".py")
+            with self.subTest(module=module):
+                self.assertTrue(os.path.exists(path), f"{module}.py missing")
+                with open(path, encoding="utf-8") as handle:
+                    tree = ast.parse(handle.read(), filename=path)
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    func = node.func
+                    is_logger = (isinstance(func, ast.Attribute)
+                                 and isinstance(func.value, ast.Name)
+                                 and func.value.id in ("logger", "logging"))
+                    if not is_logger:
+                        continue
+                    for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                        for sub in ast.walk(arg):
+                            if isinstance(sub, ast.Name):
+                                self.assertNotIn(
+                                    sub.id.lower(), self.FORBIDDEN_ARG_NAMES,
+                                    f"{module}:{node.lineno} logger.{func.attr} "
+                                    f"carries a risky name {sub.id!r}")
+                            if isinstance(sub, ast.JoinedStr):
+                                self.fail(
+                                    f"{module}:{node.lineno} logger.{func.attr} "
+                                    "interpolates an f-string (format templates "
+                                    "only — %s style)")
+
+    def test_consent_disclosure_copy_is_exact_and_gated(self):
+        # G5: U2 consent copy present verbatim + fail-closed validation core.
+        from settings_dictation_view import CONSENT_COPY, PAID_KEY_COPY, validate_save
+        self.assertEqual(
+            CONSENT_COPY,
+            "I understand: cloud processing \u2014 Google may use my data for training.")
+        self.assertIn("paid Google Cloud key", PAID_KEY_COPY)
+        # gemini-live without consent OR paid attestation blocks SAVE (U2)
+        blocking = validate_save({"live_engine": "gemini-live"},
+                                 {"gemini_consent": False,
+                                  "gemini_paid_key_confirmed": False})
+        self.assertIn("Accept the Gemini notice", blocking)
+        self.assertEqual(validate_save({"live_engine": "gemini-live"},
+                                       {"gemini_consent": True}), "")
+        self.assertEqual(validate_save({"live_engine": "gemini-live"},
+                                       {"gemini_paid_key_confirmed": True}), "")
+        self.assertEqual(validate_save({"live_engine": "local"},
+                                       {"gemini_consent": False}), "")
+        # U2 default OFF at the config boundary
+        import config_manager
+        self.assertIs(config_manager.DEFAULT_CONFIG["gemini_consent"], False)
+        self.assertIs(config_manager.DEFAULT_CONFIG["gemini_paid_key_confirmed"],
+                      False)
 
 
 if __name__ == "__main__":

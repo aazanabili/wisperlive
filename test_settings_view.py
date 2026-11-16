@@ -17,6 +17,7 @@ import queue
 import unittest
 from unittest import mock
 
+import config_manager
 import providers
 import settings_view
 
@@ -224,13 +225,42 @@ class ProviderChangeTests(SettingsDialogTestCase):
         self.assertEqual(self.w["model_var"].get(), "mimo-v2.6-flash")
         self.assertEqual(self.w["transcription_var"].get(), "mimo-v2.5-asr")
 
-    def test_api_key_survives_provider_switches(self):
-        self.w["key_var"].set("sk-precious")
-        for label in ("Xiaomi MiMo", "Groq", "Custom (OpenAI-compatible URL)",
-                      "OpenAI"):
-            with self.subTest(provider=label):
-                self.select_provider(label)
-                self.assertEqual(self.w["key_var"].get(), "sk-precious")
+    def test_api_key_rehydrates_per_vendor_on_provider_switch_k7(self):
+        """K7 BY DESIGN (plan R-U7; A3 K7; A5A7 474) — REPLACES the pre-K7
+        ``test_api_key_survives_provider_switches`` (whose carry-across
+        behaviour K7 changes by design, exactly like models never carry):
+
+        on provider change the dialog must (a) file the typed key under the
+        ORIGIN vendor slot and (b) re-hydrate ``key_var`` from the NEW
+        vendor's slot (possibly ``""``).
+
+        *** FAILING PIN (QA-2026-11-16): production defect reported to
+        architect-orchestrator — ``settings_provider_view``'s
+        ``apply_provider_change`` never calls
+        ``config_manager.set_vendor_key(origin)/get_vendor_key(new)``, so the
+        typed key carries across providers (misfiling risk, K7's exact stated
+        hazard).  NOT fixed by QA (test-only writer); worker-executor owns the
+        fix. ***
+        """
+        # seed a stored Groq key so rehydration from a NON-empty slot is provable
+        self.app.config["api_keys_protected"] = {
+            "groq": config_manager._protect_api_key("gsk-stored")}
+        self.w["key_var"].set("sk-precious")            # typed for origin (custom)
+        self.select_provider("Xiaomi MiMo")             # origin = custom
+        # (b) field rehydrates from the NEW vendor's slot: never the old key
+        self.assertEqual(self.w["key_var"].get(), "")
+        # (a) the typed key was filed under the ORIGIN vendor
+        self.assertEqual(config_manager.get_vendor_key(self.app.config, "custom"),
+                         "sk-precious")
+        # a vendor WITH a stored key re-hydrates that exact key
+        self.select_provider("Groq")
+        self.assertEqual(self.w["key_var"].get(), "gsk-stored")
+        # switching BACK restores the origin vendor's own key (not the Groq one)
+        self.select_provider("Custom (OpenAI-compatible URL)")
+        self.assertEqual(self.w["key_var"].get(), "sk-precious")
+        # no vendor slot ever leaks another vendor's key (K7 misattribution)
+        self.assertEqual(
+            config_manager.get_vendor_key(self.app.config, "xiaomi-mimo"), "")
 
     def test_all_split_rows_toggle_per_provider(self):
         split = "Xiaomi MiMo"

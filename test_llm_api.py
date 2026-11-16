@@ -667,5 +667,44 @@ class PostProcessTextTests(unittest.TestCase):
             self.call(response={"data": []})
 
 
+class LlmErrorsReExportIdentityTests(unittest.TestCase):
+    """dictation-modes Step 1.4 / A3 T17: llm_api re-exports the EXACT class
+    objects from the pure ``llm_errors`` leaf (pinning from the llm_api side;
+    ``test_llm_errors`` cross-checks the same contract from the leaf side)."""
+
+    RE_EXPORTED = (
+        "ConsentRequiredError", "DictationError", "EngineUnavailableError",
+        "FocusLostError", "LLMAuthError", "LLMConfigError", "LLMError",
+        "LLMNetworkError", "LLMQuotaError", "ModelNotDownloadedError",
+    )
+
+    def test_every_reexported_error_is_the_identical_object(self):
+        import llm_errors
+        for name in self.RE_EXPORTED:
+            with self.subTest(name=name):
+                self.assertIs(getattr(llm_api, name), getattr(llm_errors, name))
+
+    def test_classic_except_boundaries_keep_their_exact_meaning(self):
+        import llm_errors
+        # LLMQuotaError instances still satisfy every classic boundary
+        error = llm_errors.LLMQuotaError("paused", engine_id="groq-whisper")
+        self.assertIsInstance(error, llm_api.LLMError)
+        with self.assertRaises(llm_api.LLMError):
+            raise error
+        # the session umbrella stays a SIBLING (FocusLost never caught as LLM)
+        self.assertNotIsInstance(llm_errors.FocusLostError("x"), llm_api.LLMError)
+        self.assertIsInstance(llm_errors.FocusLostError("x"), llm_api.DictationError)
+
+    def test_quota_error_constructor_kwargs_survive_the_reexport(self):
+        error = llm_api.LLMQuotaError("paused", engine_id="groq-whisper",
+                                      reset_hint="14:05")
+        self.assertEqual((error.engine_id, error.reset_hint),
+                         ("groq-whisper", "14:05"))
+        self.assertEqual(llm_api.ModelNotDownloadedError("m",
+                                                         model_id="fw").model_id, "fw")
+        self.assertEqual(llm_api.EngineUnavailableError(
+            "x", engine_id="local", reason="r").reason, "r")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -541,6 +541,12 @@ class ExactSurfaceAndPurityTests(unittest.TestCase):
                                  f"{name} must not exist (second registry / struck key)")
 
     def test_ast_purity_guard_imports_only_dataclasses_typing(self):
+        # R-3 Option D (Revision Log): providers.normalize_config DELEGATES the
+        # M13-M23/K-rule normalization to `dictation_config`, a NEW pure module
+        # that itself imports NOTHING (zero-import stdlib-free leaf), so the
+        # allowlist widens by exactly that one app module. Everything else stays
+        # forbidden: I/O modules, tkinter, urllib, and any other app module
+        # (which would break the acyclic, side-effect-free providers leaf).
         path = REPO_DIR / "providers.py"
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         imported = set()
@@ -550,8 +556,9 @@ class ExactSurfaceAndPurityTests(unittest.TestCase):
                     imported.add(alias.name.split(".")[0])
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").split(".")[0])
-        self.assertTrue(imported <= {"dataclasses", "typing"},
-                        f"providers.py imports forbidden modules: {sorted(imported)}")
+        allowed = {"dataclasses", "typing", "dictation_config"}
+        self.assertTrue(imported <= allowed,
+                        f"providers.py imports forbidden modules: {sorted(imported - allowed)}")
         # No I/O, printing, or dynamic-import calls either.
         called = {node.func.id for node in ast.walk(tree)
                   if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}

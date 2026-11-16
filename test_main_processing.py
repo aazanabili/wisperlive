@@ -420,5 +420,599 @@ class UiMarshalingTests(unittest.TestCase):
         app.indicator.hide.assert_called_once()
 
 
+# ---------------------------------------------------------------------------
+# Dictation-mode integration (plan 2.3, G1/G4): session snapshot threading,
+# M2 quit-race extension (zero injection after exit), stop-during-backlog
+# ordered drain, quota no-silent-failover, and Arabic/English trim properties.
+# ---------------------------------------------------------------------------
+import struct  # noqa: E402  (kept next to the session fixtures below)
+
+import dictation_session as ds  # noqa: E402
+from dictation_session import DictationSession  # noqa: E402
+from dictation_types import EmissionOut, build_session_config  # noqa: E402
+from vad_segmenter import VadSegmenter  # noqa: E402
+
+SPEECH_BLOCK = struct.pack("<320h", *([1000] * 320))     # 20 ms, amplitude != 0
+SILENCE_BLOCK = struct.pack("<320h", *([0] * 320))
+
+
+class _ContentVadSession:
+    """Fake silero model: score follows the WINDOW CONTENT (speech vs silence)."""
+
+    def get_inputs(self):
+        return []
+
+    def run(self, _outputs, feed):
+        window = feed["x"][0]
+        speaking = any(abs(value) > 0.001 for value in window)
+        return [[0.95 if speaking else 0.0]]
+
+
+def make_vad(min_segment_s=0.0, store_dir="", **_kwargs):
+    return VadSegmenter(_ContentVadSession(), onset_windows=2, pause_windows=3,
+                        min_segment_s=min_segment_s)
+
+
+class SlowEngine:
+    """Deterministic out-of-order completions (odd seqs finish last)."""
+
+    last_config = None
+
+    def __init__(self, base=0.12, texts=None):
+        self.base = base
+        self.processed = []
+        self.texts = texts
+
+    def start(self, config):
+        SlowEngine.last_config = config
+
+    def process(self, segment):
+        import time as _time
+        _time.sleep(self.base if segment.segment_seq % 2 else 0.01)
+        self.processed.append(segment.segment_seq)
+        text = (self.texts or {}).get(
+            segment.segment_seq, f"unit-{segment.segment_seq}")
+        return [EmissionOut(text, segment_seq=segment.segment_seq)]
+
+    def close(self):
+        pass
+
+
+class RecordingTyper:
+    def __init__(self):
+        self.submitted, self.typed_any, self.stopped = [], True, 0
+        self.aborted = False
+
+    def start(self):
+        pass
+
+    def submit(self, emission):
+        self.submitted.append(emission.emission_seq)
+        return True
+
+    def stop(self):
+        self.stopped += 1
+
+    def abort(self):
+        self.aborted = True
+
+
+class _SessionApp:
+    """Duck-typed app double (never touches Tk or real audio)."""
+
+    def __init__(self, config):
+        self.config = dict(config)
+        self.is_exiting = False
+        self.is_processing = False
+        self.statuses, self.beeps, self.finished = [], [], 0
+        self.indicator = mock.MagicMock()
+        self._typer = None
+
+        class Recorder:
+            is_recording = False
+            starts = 0
+            sink = None
+
+            def start_block_stream(inner_self, sink):
+                Recorder.starts += 1
+                Recorder.sink = sink
+
+            def stop_block_stream(inner_self):
+                return None
+        self.recorder = Recorder()
+
+    def set_status(self, message, state):
+        self.statuses.append((message, state))
+
+    def beep(self, freq, dur):
+        self.beeps.append((freq, dur))
+
+    def call_in_ui(self, callback):
+        if not self.is_exiting:
+            callback()
+
+    def _on_processing_finished(self):
+        self.finished += 1
+        self.is_processing = False
+
+    def pump(self, speech=6, silence=8, sink=None):
+        target = sink if sink is not None else self.recorder.sink
+        for _ in range(speech):
+            target(SPEECH_BLOCK)
+        for _ in range(silence):
+            target(SILENCE_BLOCK)
+
+
+def chunked_config(**extra):
+    config = {
+        "dictation_mode": "chunked", "cleanup_mode": "cloud", "provider": "openai",
+        "provider_base_url": "https://api.openai.com/v1", "model": "gpt-audio",
+        "transcription_model": "", "target_language": "English",
+        "chunked_engine": "", "polish_mode": "insert", "model_size": "auto",
+        "live_engine": "local", "gemini_consent": False,
+        "gemini_paid_key_confirmed": False, "cleanup_model": "",
+        "model_store_dir": "", "local_models": {}, "api_keys_protected": {},
+        "quota_limits": {}, "first_run_guidance_seen": False,
+    }
+    config.update(extra)
+    return config
+
+
+def wait_until(predicate, timeout=20.0):
+    import time as _time
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        if predicate():
+            return True
+        _time.sleep(0.02)
+    return False
+
+
+class SessionWiringTests(unittest.TestCase):
+    """main -> DictationSession routing; the classic path stays byte-identical."""
+
+    def _session_app(self, config):
+        app = _app(is_exiting=False)
+        app.config = dict(config)
+        app.beep = mock.MagicMock()          # never sound on this host
+        return app
+
+    def test_stop_and_process_routes_to_an_active_session(self):
+        app = self._session_app(chunked_config())
+        app.dictation = mock.MagicMock()
+        app.dictation.is_active = True
+        app.recorder = mock.MagicMock()
+        app.recorder.is_recording = True
+
+        with mock.patch.object(main.threading, "Thread") as thread:
+            app.stop_and_process()
+        app.dictation.request_stop.assert_called_once()
+        thread.assert_not_called()                       # no classic worker started
+        app.recorder.stop_recording.assert_not_called()
+
+    def test_start_recording_routes_session_modes_and_keeps_classic_byte_identical(self):
+        app = self._session_app(chunked_config())
+        app.dictation = mock.MagicMock()
+        app.dictation.maybe_start.return_value = True
+        app.recorder = mock.MagicMock()
+        app.recorder.is_recording = False
+
+        app.start_recording()
+        app.dictation.maybe_start.assert_called_once()
+        app.recorder.start_recording.assert_not_called()  # session handled it
+
+        # classic config (NO dictation_mode): maybe_start False -> classic guard
+        classic = _app(is_exiting=False)
+        classic.config = {"provider_base_url": "https://api.openai.com/v1",
+                          "model": "gpt-audio", "transcription_model": ""}
+        classic.beep = mock.MagicMock()
+        classic.dictation = mock.MagicMock()
+        classic.dictation.maybe_start.return_value = False
+        classic.recorder = mock.MagicMock()
+        classic.recorder.is_recording = False
+        classic.start_recording()
+        classic.recorder.start_recording.assert_called_once()
+
+    def test_quit_app_aborts_the_session_before_destroying_the_root(self):
+        app = self._session_app(chunked_config())
+        app.dictation = mock.MagicMock()
+        app.tray_icon = mock.MagicMock()
+        app.indicator = mock.MagicMock()
+        app.root = mock.MagicMock()
+        app.clear_hotkeys = mock.MagicMock()
+
+        app.quit_app()
+        self.assertTrue(app.is_exiting)
+        app.dictation.abort_all.assert_called_once_with("quit")   # M2 extended
+        app.root.destroy.assert_called_once()
+
+
+class SessionSnapshotThreadingTests(unittest.TestCase):
+    """D10: the snapshot is built on the UI thread at start; workers read ONLY
+    it — mid-session Settings edits apply to the NEXT recording."""
+
+    def test_mid_session_config_edits_never_reach_the_running_snapshot(self):
+        app = _SessionApp(chunked_config())
+        engine = SlowEngine(base=0.01)
+        session = DictationSession(
+            app, engine_factory=lambda cfg, store="": engine,
+            vad_factory=make_vad,
+            typer_factory=lambda _a, _s: RecordingTyper())
+        with mock.patch.object(ds, "paste_text"):
+            self.assertTrue(session.maybe_start())
+            snapshot = SlowEngine.last_config
+            self.assertIsInstance(snapshot, object)
+            self.assertEqual(snapshot.chunked_engine, "openai")   # "" inherited at start
+            # Settings edits mid-session mutate the LIVE dict only
+            app.config["model"] = "CHANGED"
+            app.config["chunked_engine"] = "groq-whisper"
+            app.config["target_language"] = "German"
+            app.config["dictation_mode"] = "live"
+            self.assertEqual(snapshot.post_model, "gpt-audio")
+            self.assertEqual(snapshot.chunked_engine, "openai")
+            self.assertEqual(snapshot.target_language, "English")
+            self.assertEqual(snapshot.dictation_mode, "chunked")
+            with self.assertRaises(Exception):
+                snapshot.post_model = "hacked"                # frozen (D10)
+            session.abort_all("test_cleanup")
+        self.assertEqual(session.state.value, "idle")
+
+    def test_snapshot_carries_only_the_least_privilege_key_set(self):
+        app = _SessionApp(chunked_config(provider="openai"))
+        app.config["api_keys_protected"] = {}
+        config_manager = ds.config_manager
+        config_manager.set_vendor_key(app.config, "openai", "sk-1")
+        config_manager.set_vendor_key(app.config, "groq", "gsk-other")
+        engine = SlowEngine(base=0.01)
+        session = DictationSession(
+            app, engine_factory=lambda cfg, store="": engine,
+            vad_factory=make_vad,
+            typer_factory=lambda _a, _s: RecordingTyper())
+        with mock.patch.object(ds, "paste_text"):
+            self.assertTrue(session.maybe_start())
+            snapshot = SlowEngine.last_config
+            self.assertEqual(set(snapshot.api_keys), {"openai"})  # least privilege (A3)
+            session.abort_all("test_cleanup")
+
+
+class StopDuringBacklogTests(unittest.TestCase):
+    """G1: stop with a slow engine drains BOUNDED and emits strictly ordered."""
+
+    def _run(self, bursts=5, engine=None):
+        app = _SessionApp(chunked_config())
+        engine = engine or SlowEngine()
+        typer = RecordingTyper()
+        session = DictationSession(
+            app, engine_factory=lambda cfg, store="": engine,
+            vad_factory=make_vad, typer_factory=lambda _a, _s: typer)
+        with mock.patch.object(ds, "paste_text") as paste:
+            import time as _time
+            started = _time.monotonic()
+            self.assertTrue(session.maybe_start())
+            for index in range(bursts):
+                app.pump()
+                if index < bursts - 1:
+                    # let the workers drain between bursts -> distinct units
+                    # (merge-on-backlog stays covered by the engine below)
+                    _time.sleep(0.12)
+            session.request_stop()
+            finished = wait_until(lambda: not session.is_active)
+            elapsed = _time.monotonic() - started
+        return session, app, engine, typer, paste, elapsed, finished
+
+    def test_ordered_drain_is_bounded_and_strictly_sequenced(self):
+        session, app, engine, typer, paste, elapsed, finished = self._run()
+        self.assertTrue(finished, "drain never finished")
+        self.assertLess(elapsed, 15.0, f"drain not bounded: {elapsed:.1f}s")
+        emissions = session.emissions
+        self.assertTrue(emissions, "no emissions recorded")
+        self.assertEqual([e.emission_seq for e in emissions],
+                         list(range(len(emissions))))        # 0..n-1 gapless
+        self.assertEqual([e.segment_seq for e in emissions],
+                         sorted(e.segment_seq for e in emissions))  # segment order
+        self.assertTrue(all(e.is_final for e in emissions))
+        self.assertEqual(typer.submitted,
+                         [e.emission_seq for e in emissions])  # actor got the same order
+        # Phase-2 fallback paste: the actor reports typed_any=True -> paste AND
+        # its completion beep are skipped (D4: ONE sink per session); exactly
+        # the start + stop beeps remain.
+        paste.assert_not_called()
+        self.assertEqual(len(app.beeps), 2)
+        self.assertIn(("Done. Ready for the next recording.", "ready"), app.statuses)
+        self.assertFalse(app.is_processing)
+        self.assertEqual(session.state.value, "idle")
+
+    def test_arabic_and_english_units_drain_in_order_without_loss(self):
+        texts = {0: "مرحبا بالعالم", 1: "hello world", 2: "اللغة العربية",
+                 3: "final english unit"}
+        engine = SlowEngine(base=0.05, texts=texts)
+        session, app, _engine, typer, _paste, _elapsed, finished = self._run(
+            bursts=4, engine=engine)
+        self.assertTrue(finished)
+        emissions = session.emissions
+        got = [e.text for e in emissions]
+        # gapless strictly-ordered sequencing for BOTH scripts
+        self.assertEqual([e.emission_seq for e in emissions],
+                         list(range(len(emissions))))
+        self.assertEqual([e.segment_seq for e in emissions],
+                         sorted(e.segment_seq for e in emissions))
+        # the first burst is always unit 0 (queue empty at first offer)
+        self.assertEqual(got[0], texts[0])                   # مرحبا بالعالم
+        self.assertIn("مرحبا بالعالم", got)                  # non-ASCII survives (D11)
+        self.assertTrue(set(got) <= set(texts.values()),     # never invented text
+                        got)
+        self.assertEqual(typer.submitted, list(range(len(got))))
+
+
+class QuitMidDrainTests(unittest.TestCase):
+    """M2 EXTENDED: quitting mid-drain yields ZERO emissions and ZERO injection."""
+
+    def test_zero_injection_after_exit(self):
+        app = _SessionApp(chunked_config())
+        engine = SlowEngine(base=0.35)
+        typer = RecordingTyper()
+        session = DictationSession(
+            app, engine_factory=lambda cfg, store="": engine,
+            vad_factory=make_vad, typer_factory=lambda _a, _s: typer)
+        with mock.patch.object(ds, "paste_text") as paste:
+            self.assertTrue(session.maybe_start())
+            for _ in range(4):
+                app.pump()
+            session.request_stop()
+            import time as _time
+            _time.sleep(0.15)                                # mid-drain (engines busy)
+            app.is_exiting = True                            # M2: quit flips FIRST
+            session.abort_all("quit")
+            self.assertEqual(session.emissions, (), "emissions survived the abort")
+            self.assertEqual(session.state.value, "idle")
+            self.assertTrue(typer.aborted, "actor must be frozen (M2)")
+            paste.assert_not_called()
+            submitted_at_abort = list(typer.submitted)
+            _time.sleep(0.5)                                 # late workers stay silent
+            self.assertEqual(session.emissions, ())
+            self.assertEqual(paste.call_count, 0)
+            self.assertEqual(typer.submitted, submitted_at_abort)  # no typing after abort
+            self.assertEqual(app.finished, 0)                # call_in_ui suppressed (M2)
+
+    def test_quit_app_through_main_aborts_the_session(self):
+        # M2 extension at the main level: quit_app flips is_exiting BEFORE
+        # abort_all, and injection is gated by both flags downstream.
+        app = _app(is_exiting=False)
+        app.config = chunked_config()
+        app.dictation = mock.MagicMock()
+        app.tray_icon = mock.MagicMock()
+        app.clear_hotkeys = mock.MagicMock()
+        app.quit_app()
+        self.assertTrue(app.is_exiting)
+        app.dictation.abort_all.assert_called_once_with("quit")
+
+
+class QuotaNoSilentFailoverTests(unittest.TestCase):
+    """G4 (session level): a tiny budget admits ONE dispatch; the rest become
+    quota_exhausted notices with the D6 offering state — NO engine switch."""
+
+    def test_exhaustion_notices_without_failover(self):
+        app = _SessionApp(chunked_config(quota_limits={"chat:openai.day": 1}))
+        engine = SlowEngine(base=0.01)
+        session = DictationSession(
+            app, engine_factory=lambda cfg, store="": engine,
+            vad_factory=make_vad, typer_factory=lambda _a, _s: RecordingTyper())
+        with mock.patch.object(ds, "paste_text"):
+            self.assertTrue(session.maybe_start())
+            for _ in range(4):
+                app.pump()
+            session.request_stop()
+            self.assertTrue(wait_until(lambda: not session.is_active))
+        quota_notices = [n for n in session.notices
+                         if n["kind"] == "quota_exhausted"]
+        self.assertTrue(quota_notices, "expected a quota_exhausted notice")
+        self.assertEqual(quota_notices[0]["options"],
+                         ("local", "finish_at_stop", "abort_with_clipboard"))
+        self.assertEqual(len(engine.processed), 1, engine.processed)  # ONE dispatch
+        self.assertEqual(len(session.emissions), 1)
+        self.assertEqual([e.emission_seq for e in session.emissions], [0])
+        # NO failover: the session engine id never changed
+        self.assertEqual(session._engine_id, "chat:openai")
+
+
+class PublishIdempotenceTests(unittest.TestCase):
+    """G1 dedupe: a duplicate replay of one segment never lands twice —
+    driven SYNCHRONOUSLY through the session's own drain (no threads), so the
+    assertion is exact and race-free."""
+
+    def test_duplicate_publish_of_the_same_seq_is_dropped(self):
+        app = _SessionApp(chunked_config())
+        session = DictationSession(
+            app, engine_factory=lambda cfg, store="": SlowEngine(base=0.0),
+            vad_factory=make_vad, typer_factory=lambda _a, _s: RecordingTyper())
+        with session._cond:
+            session._segments_total = 2
+            session._workers_done = True
+        emission = EmissionOut("once", segment_seq=0, emission_seq=-1)
+        session._publish(0, [emission])
+        session._publish(0, [emission])                  # duplicate replay
+        session._publish(1, [])                          # failed unit
+        session._publish(1, [])                          # duplicate failure
+        self.assertEqual(len(session._pending), 1)       # publish-level dedupe
+        self.assertEqual(session._failed, {1})
+        latest = session._drain_ordered(-1)              # ordered drain (emission_seq)
+        self.assertEqual(latest, 0)
+        self.assertEqual(session._drain_ordered(latest), 0)   # idempotent re-drain
+        texts = [e.text for e in session.emissions]
+        self.assertEqual(texts, ["once"])                    # exactly once
+        self.assertEqual([e.emission_seq for e in session.emissions], [0])
+
+
+class WordTrimPropertyTests(unittest.TestCase):
+    """G1 trim property (Arabic + English): adjacent units keep seam words
+    EXACTLY once — no blind overlap, nothing fabricated, nothing dropped."""
+
+    SAMPLES = {
+        "english": [(0.0, 0.2, "word"), (0.9, 1.2, "seam"), (1.3, 1.5, "next"),
+                    (1.9, 2.3, "edge")],
+        "arabic": [(0.0, 0.3, "\u0645\u0631\u062d\u0628\u0627"),   # مرحبا
+                   (1.0, 1.3, "\u0628\u0627\u0644\u0639\u0627\u0644\u0645"),  # بالعالم
+                   (1.5, 1.7, "\u0646\u0635\u0641"),              # نصف
+                   (2.4, 2.6, "\u0643\u0644\u0645\u0629")],       # كلمة
+    }
+
+    def test_units_partition_the_words_exactly_once(self):
+        from vad_segmenter import trim_word_timings
+        for language, words in self.SAMPLES.items():
+            with self.subTest(language=language):
+                # three adjacent units covering [0,3): every word whose
+                # midpoint sits in a unit is kept by EXACTLY that unit
+                kept = []
+                for start, end in ((0.0, 1.0), (1.0, 2.0), (2.0, 3.0)):
+                    kept.extend(w[2] for w in
+                                trim_word_timings(words, unit_offset_s=0.0,
+                                                  speech_start_s=start,
+                                                  speech_end_s=end))
+                self.assertEqual(len(kept), len(set(kept)),    # exactly once
+                                 f"{language}: duplicate seam words: {kept}")
+                expected = [w[2] for w in words
+                            if start_mid(w, 0.0, 3.0)]          # sanity, see below
+                self.assertEqual(sorted(kept), sorted(expected))
+
+
+def start_mid(word, _lo, _hi):
+    mid = (word[0] + word[1]) / 2.0
+    return _lo <= mid <= _hi
+
+
+class EngineDefectDispositionTests(unittest.TestCase):
+    """A6 s2.3: an engine DEFECT (non-typed exception) dispositions the unit
+    with a unit_error notice and processing CONTINUES — the worker thread must
+    never die from its own error handler."""
+
+    def test_engine_defect_is_dispositioned_and_the_handler_never_crashes(self):
+        # *** FAILING PIN (QA-2026-11-16): production defect reported to
+        # architect-orchestrator — the generic `except Exception:` handler in
+        # `dictation_session.DictationSession._process_one` reads the name
+        # `error`, which is only bound `as error` in the TYPED clauses above it
+        # (and deleted at each handler exit), so an engine defect raises
+        # NameError instead of calling `_disposition(... "unit_error" notice)`.
+        # The handler's own comment promises "CONTINUE the rest"; today the
+        # worker thread dies and the unit is lost WITHOUT the degraded notice.
+        # NOT fixed by QA (test-only writer); worker-executor owns the fix. ***
+        from dictation_types import Segment, SegmentIn
+
+        class BoomEngine:
+            def start(self, config):
+                pass
+
+            def process(self, segment):
+                raise RuntimeError("vendor payload shape drifted")
+
+            def close(self):
+                pass
+
+        app = _SessionApp(chunked_config())
+        session = DictationSession(
+            app, engine_factory=lambda cfg, store="": BoomEngine(),
+            vad_factory=make_vad, typer_factory=lambda _a, _s: RecordingTyper())
+        resolved = session.preflight(app.config)
+        snapshot = build_session_config(
+            app.config, session_id="defect-pin", started_at_epoch=1, api_keys={})
+        session._install("chunked", resolved, snapshot, BoomEngine(),
+                         make_vad(), app.config)
+        segment = SegmentIn(segment_seq=0, pcm16=b"\x00" * 640,
+                            speech_start_s=0.0, speech_end_s=0.02,
+                            audio_seconds=0.02)
+        session._segments[0] = Segment(
+            session_id=snapshot.session_id, seq=0, audio_ref="ring:0:640",
+            start_ms=0, end_ms=20)
+        try:
+            session._process_one(segment)
+        except NameError as error:
+            self.fail(
+                "PRODUCTION DEFECT (QA failing pin): _process_one's generic "
+                f"exception handler raised NameError ({error}) instead of "
+                "dispositioning the unit — the worker thread would die here "
+                "and the unit_error notice is never recorded.")
+        record = session._segments.get(0)
+        self.assertIsNotNone(record)
+        self.assertEqual(record.status, "failed")             # dispositioned
+        self.assertEqual(record.error_kind, "RuntimeError")   # taxonomy, no message
+        notices = [n for n in session.notices if n["kind"] == "unit_error"]
+        self.assertTrue(notices, "degraded unit_error notice must be recorded (D6)")
+        self.assertEqual(session._failed, {0})                # drain can finish
+        session.abort_all("test_cleanup")
+
+
+class RuntimeLogScrapeTests(unittest.TestCase):
+    """G5 (runtime): a full session drain with a DISTINCTIVE transcript and a
+    real-shaped API key in the live config must never put either into ANY log
+    record (D11 — log-scrape over the whole session pipeline)."""
+
+    def test_transcript_and_api_key_never_reach_any_log_record(self):
+        import logging
+        from llm_errors import LLMError
+        transcript_sentinel = "SENTINEL_TRANSCRIPT_9f3cZ\u200f\u0645\u0631\u062d\u0628\u0627"
+        key_sentinel = "sk-GHA-SENTINEL-9988"
+        captured = []
+
+        class Capture(logging.Handler):
+            def emit(self, record):
+                captured.append(record.getMessage())
+
+        handlers = []
+        loggers = [logging.getLogger(name) for name in
+                   ("dictation_session", "chunked_engine", "whisper_http",
+                    "typer_actor", "polish_engine", "quota_ledger", "")]
+        for logger in loggers:
+            handler = Capture()
+            previous_level = logger.level
+            logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG)
+            handlers.append((logger, handler, previous_level))
+        try:
+            # session A: the sentinel transcript flows end-to-end (happy path)
+            texts = {0: transcript_sentinel, 1: "ordinary unit"}
+            engine = SlowEngine(base=0.01, texts=texts)
+            app = _SessionApp(chunked_config(api_key=key_sentinel,
+                                             provider_base_url="https://api.x/v1"))
+            app.config["api_keys_protected"] = {}
+            session = DictationSession(
+                app, engine_factory=lambda cfg, store="": engine,
+                vad_factory=make_vad, typer_factory=lambda _a, _s: RecordingTyper())
+            with mock.patch.object(ds, "paste_text"):
+                self.assertTrue(session.maybe_start())
+                app.pump()
+                session.request_stop()
+                self.assertTrue(wait_until(lambda: not session.is_active))
+            self.assertIn(transcript_sentinel,
+                          [e.text for e in session.emissions])
+
+            # session B: force the LOGGING paths (unit failure -> disposition
+            # warning + degraded notice) with the same live key in config.
+            class FailingEngine(SlowEngine):
+                def process(self, segment):
+                    raise LLMError(f"vendor rejected {key_sentinel}")
+            app_b = _SessionApp(chunked_config(api_key=key_sentinel,
+                                               provider_base_url="https://api.x/v1"))
+            app_b.config["api_keys_protected"] = {}
+            session_b = DictationSession(
+                app_b, engine_factory=lambda cfg, store="": FailingEngine(base=0.0),
+                vad_factory=make_vad, typer_factory=lambda _a, _s: RecordingTyper())
+            with mock.patch.object(ds, "paste_text"):
+                self.assertTrue(session_b.maybe_start())
+                app_b.pump()
+                session_b.request_stop()
+                self.assertTrue(wait_until(lambda: not session_b.is_active))
+            # the unit failed WITHOUT leaking its (key-bearing) message:
+            # disposition logged kind-only, and the emission never happens.
+            self.assertEqual(session_b.emissions, ())
+        finally:
+            for logger, handler, previous_level in handlers:
+                logger.removeHandler(handler)
+                logger.setLevel(previous_level)
+        self.assertTrue(captured, "capture must be non-vacuous")
+        for message in captured:
+            self.assertNotIn(transcript_sentinel, message)
+            self.assertNotIn(key_sentinel, message)
+            self.assertNotIn("\u0645\u0631\u062d\u0628\u0627", message)  # مرحبا
+
+
 if __name__ == "__main__":
     unittest.main()

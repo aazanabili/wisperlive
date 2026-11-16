@@ -66,14 +66,25 @@ class SplitModuleSmokeTests(unittest.TestCase):
         # extended into the no-main-import list.
         root_dir = os.path.dirname(os.path.abspath(__file__))
         # row 7 + provider-presets: settings_view/single_instance joined, then
-        # the two pure registry/wire modules (acyclic: neither imports main).
+        # the two pure registry/wire modules (acyclic: neither imports main);
+        # dictation-modes: EVERY new production module joins the set (plan 2.3).
         modules = (
             "themes", "startup", "views", "indicator", "tray", "app_logging",
             "settings_view", "single_instance", "providers", "llm_payloads",
+            # --- dictation-modes (T-2026-11-16) ---
+            "dictation_config", "dictation_types", "llm_errors", "quota_ledger",
+            "model_manifest", "session_state", "dictation_session", "pcm_stream",
+            "vad_segmenter", "local_engine", "chunked_engine", "whisper_http",
+            "typer_actor", "focus_guard", "polish_engine", "model_store",
+            "live_local_engine", "live_cloud_engine",
+            "settings_provider_view", "settings_keys_view",
+            "settings_dictation_view", "settings_models_view",
+            "session_dialogs", "smoke",
         )
         for module in modules:
             path = os.path.join(root_dir, module + ".py")
             with self.subTest(module=module):
+                self.assertTrue(os.path.exists(path), f"{module}.py is missing")
                 with open(path, encoding="utf-8") as handle:
                     tree = ast.parse(handle.read(), filename=path)
                 for node in ast.walk(tree):
