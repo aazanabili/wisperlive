@@ -84,6 +84,10 @@ class SettingsKeysMixin:
         vendor_row(GEMINI_VENDOR, "Google Gemini key",
                    "Used by Gemini Live. Stored encrypted on this computer.",
                    config_manager.get_vendor_key(config, GEMINI_VENDOR))
+        # F-2: the Gemini key row carries the SAME red disclosure as the gate
+        # (reuses the exact consent copy — the toggle below stays the action).
+        tk.Label(extras, text=CONSENT_COPY, bg=c["surface"], fg=c["danger"],
+                 font=("Segoe UI", 9), justify=tk.LEFT, wraplength=400).pack(anchor=tk.W)
         # U2: RED consent gates the free tier; paid attestation is the A3 branch.
         consent = focus_ring(tk.Checkbutton(
             extras, text=CONSENT_COPY, variable=consent_var, fg=c["danger"],

@@ -84,24 +84,26 @@ class SettingsDialogMixin(SettingsDictationMixin, SettingsKeysMixin,
         def save_settings():
             # Tab payloads merge FIRST (dictation/keys/models), the ONE save
             # validator can block, then the provider payload LAST (R3 IFF rule
-            # enforced in providers.save_payload).
+            # enforced in providers.save_payload).  The provider panel snapshot
+            # feeds BOTH the F-2 endpoint validation and the payload write.
+            panel_values = {
+                "provider": self.settings_widgets["provider_var"].get(),
+                "provider_variant": self.settings_widgets["variant_var"].get(),
+                "provider_base_url": self.settings_widgets["base_var"].get(),
+                "api_key": self.settings_widgets["key_var"].get(),
+                "model": self.settings_widgets["model_var"].get(),
+                "transcription_model": self.settings_widgets["transcription_var"].get(),
+            }
             issue = self.apply_settings_payloads(
-                (dictation_payload(), keys_payload(), models_payload()), notebook, panel)
+                (dictation_payload(), keys_payload(), models_payload()), notebook, panel,
+                panel_values)
             if issue:
                 return
-            provider_values = self.settings_widgets
-            self.config.update(providers.save_payload({
-                "provider": provider_values["provider_var"].get(),
-                "provider_variant": provider_values["variant_var"].get(),
-                "provider_base_url": provider_values["base_var"].get(),
-                "api_key": provider_values["key_var"].get(),
-                "model": provider_values["model_var"].get(),
-                "transcription_model": provider_values["transcription_var"].get(),
-            }))
+            self.config.update(providers.save_payload(panel_values))
             # K7: file the final field under the ACTIVE vendor so a reopen re-hydrates
             # this exact key (switches already filed each origin vendor — plan R-U7).
             set_vendor_key(self.config, providers.resolve_provider_id(
-                self.config.get("provider")), provider_values["key_var"].get())
+                self.config.get("provider")), panel_values["api_key"])
             saved = save_config(self.config)
             destroy_dialog()
             if saved:

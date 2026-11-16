@@ -28,9 +28,9 @@ from chunked_engine import ChunkedEngine, min_segment_seconds, quota_engine_id
 from dictation_types import (Segment, SegmentIn, SessionConfig,
                              build_session_config, next_seq, resolve_chunked_engine,
                              set_status)
-from llm_errors import (ConsentRequiredError, DictationError, EngineUnavailableError,
-                        LLMConfigError, LLMError, LLMQuotaError,
-                        ModelNotDownloadedError)
+from gemini_gate import require_gemini_consent, require_gemini_route
+from llm_errors import (DictationError, EngineUnavailableError, LLMConfigError,
+                        LLMError, LLMQuotaError, ModelNotDownloadedError)
 from live_cloud_engine import WS_TRANSPORT_MESSAGE, LiveCloudEngine
 from live_local_engine import LiveLocalEngine, live_model_id
 from local_engine import LocalEngine, resolve_model_id
@@ -198,6 +198,8 @@ class DictationSession:
             self._require_local_model(source, live_model_id(source.get("model_size")))
             return "local"
         if mode == "local":
+            if cleanup == "cloud":
+                require_gemini_route(source)         # F-2: consent FIRST (U2/D9 order)
             self._require_local_model(
                 source, resolve_model_id(str(source.get("model_size") or "auto")))
             if cleanup == "cloud":
@@ -205,6 +207,10 @@ class DictationSession:
             return "local"
         # -- chunked ---------------------------------------------------------
         resolved = resolve_chunked_engine(source)
+        # F-2 FIRST: any provider-path traffic (chat transcription unless the
+        # engine is Groq, cloud cleanup on ANY engine) to Gemini needs consent.
+        if resolved != "groq-whisper" or cleanup == "cloud":
+            require_gemini_route(source)
         if resolved == "groq-whisper":
             if not config_manager.get_vendor_key(source, "groq"):
                 raise LLMConfigError("Add your Groq API key in Settings before recording.")
@@ -370,11 +376,9 @@ class DictationSession:
 
     @staticmethod
     def _require_gemini_consent(source, engine_id: str) -> None:
-        """U2 fail-closed BEFORE any network: consent OR paid-key attestation (M20)."""
-        if not (source.get("gemini_consent") is True or source.get("gemini_paid_key_confirmed") is True):
-            raise ConsentRequiredError(
-                "Google Gemini stays disabled until you accept the data notice "
-                "in Settings (or confirm a paid key).", engine_id=engine_id)
+        """U2/F-2 fail-closed BEFORE any network: consent OR paid-key (M20) —
+        the ONE rule lives in ``gemini_gate`` (shared with the provider path)."""
+        require_gemini_consent(source, engine_id)
 
     def _require_cloud_live(self, engine_id: str, source) -> str:
         """Phase-7 preflight ORDER (U2/D9): consent -> key -> transport import.  Never

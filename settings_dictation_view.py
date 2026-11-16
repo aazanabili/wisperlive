@@ -18,6 +18,7 @@ import tkinter as tk
 
 import config_manager
 import providers
+from gemini_gate import save_route
 from llm_api import NO_TRANSLATION
 from themes import COLORS
 
@@ -32,6 +33,7 @@ CONSENT_COPY = "I understand: cloud processing \u2014 Google may use my data for
 PAID_KEY_COPY = "I confirm this Google API key is a paid Google Cloud key."
 PAID_NOTE = "Paid key confirmed \u2014 the free-tier notice does not apply."
 VALIDATION_GEMINI = "Accept the Gemini notice before selecting Gemini Live."
+VALIDATION_GEMINI_PROVIDER = "Accept the Gemini notice in Settings \u2192 Engines & keys before using Google Gemini."
 GEMINI_VENDOR = "google-gemini"     # registry id (providers) for the consent-gated engine
 STORE_ABSENT_REASON = "Downloads open when the model store is available in this build."
 
@@ -87,14 +89,13 @@ def format_reset_from_hint(now_epoch, hint):
         return ""
 
 
-def validate_save(dictation_values, keys_values) -> str:
-    """Save-blocker (A5A7 3.1 - the ONE hard rule): Gemini Live needs consent
-    OR the paid-key attestation (U2 fail-closed).  '' = save may run."""
-    if dictation_values.get("live_engine") != "gemini-live":
-        return ""
-    if keys_values.get("gemini_consent") or keys_values.get("gemini_paid_key_confirmed"):
-        return ""
-    return VALIDATION_GEMINI
+def validate_save(dictation_values, keys_values, provider_values=None) -> str:
+    """Save-blocker (A5A7 3.1 - the ONE hard rule): consent OR the paid-key
+    attestation gates the live Gemini engine AND every Gemini-bound route."""
+    route = save_route(dictation_values.get("live_engine"), provider_values, keys_values)
+    if route == "live":
+        return VALIDATION_GEMINI
+    return VALIDATION_GEMINI_PROVIDER if route else ""
 
 
 def local_deps_available() -> bool:
@@ -123,12 +124,12 @@ class SettingsDictationMixin:
     """Builders for the notebook tabs; ``self`` is the host (never imports main)."""
 
     # ---------------- shell support: save payloads + validation -------------
-    def apply_settings_payloads(self, payloads, notebook, engines_panel) -> str:
+    def apply_settings_payloads(self, payloads, notebook, engines_panel, provider_values) -> str:
         """Run the ONE save validator FIRST (a blocked save must NOT touch
-        config), then merge tab payloads (provider LAST - R3 IFF).  '' = the
-        save may proceed; otherwise the blocker copy renders and non-empty."""
+        config), then merge tab payloads (provider LAST - R3 IFF); the F-2
+        endpoint rule reads ``provider_values``.  '' = save may proceed."""
         dictation_values, keys_values, models_values = payloads
-        issue = validate_save(dictation_values, keys_values)
+        issue = validate_save(dictation_values, keys_values, provider_values)
         if issue:
             self.settings_widgets["validation_label"].config(text=issue)
             notebook.select(engines_panel)

@@ -24,6 +24,7 @@ import urllib.request
 from typing import Tuple
 
 from dictation_types import TypedSpan, latest_valid, register, invalidate
+from gemini_gate import require_gemini_route
 from llm_errors import EngineUnavailableError
 import llm_api
 
@@ -158,6 +159,9 @@ def polish_last(last_text: str, actor, live_config) -> str:
     else:
         # Cloud cleanup via the CLASSIC stage 2 (translation preserved); reads
         # the CURRENT settings (user-triggered action, not the session snapshot).
+        # F-2: the endpoint rule runs BEFORE the request (hand-edited configs
+        # and the Polish path are gated exactly like the engines).
+        require_gemini_route(source)
         cleaned = llm_api.post_process_text(
             last_text,
             source.get("target_language", ""),

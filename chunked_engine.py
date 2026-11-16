@@ -23,6 +23,7 @@ import tempfile
 from typing import Tuple
 
 from dictation_types import EmissionOut, SessionConfig, SegmentIn
+from gemini_gate import require_gemini_route
 from llm_errors import EngineUnavailableError, LLMConfigError
 import llm_api
 import pcm_stream
@@ -153,6 +154,7 @@ class ChunkedEngine:
                 "Cleanup mode is not available yet; choose Cloud cleanup in Settings.",
                 engine_id="cleanup", reason=str(config.cleanup_mode),
             )
+        require_gemini_route(config)                  # F-2: provider endpoint gate
         return llm_api.post_process_text(
             raw,
             config.target_language,
