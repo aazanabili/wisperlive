@@ -14,6 +14,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import providers
+
 
 CONFIG_FILE = "config.json"  # legacy basename (and the name used by callers)
 CONFIG_SUBDIR = "WhisperLive"
@@ -26,8 +28,12 @@ _IS_WINDOWS = os.name == "nt"
 
 DEFAULT_CONFIG = {
     "api_key": "",
+    # --- provider presets (T-2026-11-16-provider-presets) ---
+    "provider": "custom",        # preset id or "custom" (legacy default = exact old behaviour)
+    "provider_variant": "",      # endpoint variant id ("" = provider default / N-A)
     "provider_base_url": "",
     "model": "",
+    "transcription_model": "",   # stage-1 model; effective only for split-mode presets
     "target_language": "English",
     "shortcut": "ctrl+space",
     "mode": "toggle",
@@ -161,7 +167,9 @@ def _normalized(config):
     result.update(config)
     if "api_key_protected" in result:
         result["api_key"] = _unprotect_api_key(result.pop("api_key_protected"))
-    return result
+    # Pure M1-M12 provider/model migration + registry URL resolution
+    # (never raises; api_key handling above stays untouched — see providers.py).
+    return providers.normalize_config(result)
 
 
 def _disk_config(config):

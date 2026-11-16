@@ -20,7 +20,8 @@ from audio_recorder import AudioRecorder, RecorderError
 from auto_typer import PasteError, paste_text
 from config_manager import load_config, save_config
 from indicator import RecordingIndicator
-from llm_api import LLMError, process_audio
+from llm_api import DIALECT_OPENAI, LLMError, process_audio
+import providers
 from settings_view import SettingsDialogMixin
 from single_instance import ALREADY_RUNNING_MESSAGE, acquire_instance_lock
 from startup import set_startup_registration
@@ -221,7 +222,14 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
         if self.recorder.is_recording or self.is_processing:
             return
         # D2 (Option A): the API key is optional - local providers work keyless.
-        if not all(self.config.get(key, "").strip() for key in ("provider_base_url", "model")):
+        # Two-stage presets (MiMo) stage a separate stage-1 model, so the guard
+        # checks the EFFECTIVE models: stage 1 = transcription_model or model
+        # (fail-closed on both), stage 2 = model.  The message stays verbatim.
+        effective_transcription = (
+            self.config.get("transcription_model", "").strip() or self.config.get("model", "").strip()
+        )
+        effective_post = self.config.get("model", "").strip()
+        if not (self.config.get("provider_base_url", "").strip() and effective_transcription and effective_post):
             self.set_status("Open Settings and set the provider URL and model before recording.", "error")
             self.beep(400, 300)
             return
@@ -248,16 +256,31 @@ class WhisperLiveApp(MainUiMixin, SettingsDialogMixin):
         api_key = self.config.get("api_key", "").strip()
         base_url = self.config.get("provider_base_url", "").strip()
         model = self.config.get("model", "").strip()
+        # Stage-1 model + wire dialect (MiMo split presets); derived here so the
+        # worker thread never touches the live config dict.
+        transcription_model = self.config.get("transcription_model", "").strip()
+        dialect = providers.dialect_for_preset(self.config.get("provider", "custom"))
         threading.Thread(
             target=self.process_audio_thread,
             args=(audio_file, language, api_key, base_url, model),
+            kwargs={"dialect": dialect, "transcription_model": transcription_model},
             daemon=True,
         ).start()
 
-    def process_audio_thread(self, audio_file, language, api_key, base_url, model):
+    def process_audio_thread(self, audio_file, language, api_key, base_url, model, *,
+                             dialect=DIALECT_OPENAI, transcription_model=""):
         # worker thread: no unguarded Tk access, no live config reads, no is_processing writes
         try:
-            text = process_audio(audio_file, language, api_key, base_url, model)
+            # Forward only stage options that differ from process_audio's
+            # defaults: a plain single-stage recording keeps the exact
+            # 5-argument call shape, while MiMo's dialect and stage-1 model
+            # travel as keyword arguments (behaviourally identical either way).
+            stage_options = {}
+            if dialect != DIALECT_OPENAI:
+                stage_options["dialect"] = dialect
+            if transcription_model:
+                stage_options["transcription_model"] = transcription_model
+            text = process_audio(audio_file, language, api_key, base_url, model, **stage_options)
             if text:
                 if self.is_exiting:  # M2: quit raced the request - no post-shutdown paste/beep
                     return
