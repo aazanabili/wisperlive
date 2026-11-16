@@ -558,6 +558,26 @@ Simply reply with your preferred choice (e.g., *"Option A"* or *"Proceed with Ma
 
 ---
 
+## 🎙️ Dictation Modes (Local / Chunked / Live)
+
+The mode in **Settings → Dictation** decides what happens when you press the global shortcut. Everything below is user-triggered: nothing downloads, switches engines, or bills without an explicit action.
+
+| Mode | Engines | Options |
+| :--- | :--- | :--- |
+| **Local** (default) | On-device faster-whisper (`base` / `small`) | Model size `auto / fast / standard`; language auto-detected; cleanup Cloud/Off |
+| **Chunked (VAD)** | Chat-completions preset (any provider below) or Groq Whisper (`whisper-large-v3-turbo`/`-v3`) | Segment merging to each engine's minimum (Groq 10 s, Gemini 20 s, MiMo 5 s); cleanup Cloud/Off; raw output available |
+| **Live** | Local streaming (LA-2 confirmed phrases) · Gemini Live · OpenAI Realtime | Types only confirmed phrases as you speak — interim text is never typed |
+
+- **Models download on first use (Settings → Models only).** The installer ships no models. Sizes: `fast` ≈ 145 MB (base), `standard` ≈ 484 MB (small), auto picks per the capability probe; every file is SHA-256-verified against the in-binary manifest, the disk preflight requires the model size **+20 %** free space, downloads resume (Range/If-Range), and mirrors fall back HF → hf-mirror. Old versions are evicted after a successful switch.
+- **Quota caveats.** Groq bills a **10-second floor** per request; exact free-tier ceilings for Groq/Gemini are unknown until the first HTTP 429, so the countdown shows an honest `—` for unknown limits. WhisperLive **never silently fails over**: on exhaustion you choose switch / finish-at-stop / abort-with-clipboard.
+- **Gemini disclosure (red consent).** Gemini engines stay **off** until you accept the data notice in Settings (free-tier audio is used to improve Google's products) or confirm a paid key. Both flags fail closed server-side of the UI.
+- **Polish last dictation** (footer button / tray): re-runs the mode's cleanup over the memory-only last dictation. Default is a **safe insert** at the caret (leaving the text on the clipboard); `replace-experimental` select-backs only while the typed span is provably valid (Windows + unchanged focus) and auto-falls back to insert — never guessed.
+- **Limitations (honest).** Non-AVX2 CPUs get the `fast`/base tier via the capability probe (a notice, never a crash; no ISA claims). Wayland-only sessions lack X11 hotkey/paste support — see the Linux notes above.
+- **Optional ML extras.** `pip install -r requirements-ml.txt` enables on-device Local (+ the Silero VAD); the base install stays dependency-light and **Local is hidden with its reason** when the extras are absent. Cloud modes need no extras.
+- **`--smoke` self-check:** `python main.py --smoke` (or `WhisperLive.exe --smoke`) prints import/manifest/registry/optional-ML status and exits `0` (healthy) / `1` — no Tk, no network, no downloads.
+
+---
+
 ## ⚙️ Provider Settings (LLM Presets)
 
 The **Settings ⚙ → LLM provider** dialog ships a provider selector backed by the preset registry in `providers.py`. Every preset pins a canonical base URL, so the **Provider Base URL** field is **read-only** while a preset is selected (the registry URL is what gets saved). Choosing **Custom (OpenAI-compatible URL)** keeps the field editable so you can point WhisperLive at any OpenAI-compatible endpoint.

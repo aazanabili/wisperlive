@@ -31,3 +31,9 @@
 - **MiMo endpoint/plan selector** (visible only for Xiaomi MiMo): `API (Pay-as-you-go)` / `Token Plan — Europe (AMS)` / `Token Plan — Singapore (SGP)` / `Token Plan — China (CN)`.
 - **Split model rows for MiMo:** "Transcription model" (`mimo-v2.5-asr`) + "Post-processing model" (`mimo-v2.6-flash` default, `mimo-v2.6-pro`); a one-line `muted` hint explains that TTS models are excluded because the app never synthesizes speech, and that `mimo-v2.5-asr` officially supports zh/en (+ Chinese dialects) only. Non-MiMo keeps the single Model row + Fetch Models.
 - **Preserved:** API-key masking, background fetch with disabled button + status line, Save/Cancel semantics, Escape, English UI copy.
+
+## 5. Shipped Delta 2 (T-2026-11-16-dictation-modes — implemented 2026-11-17)
+
+- **Settings is now a 3-tab Notebook** (Dictation / Engines & keys / Models) in the same shell: mode selector (Local / Chunked-VAD / Live) with honest one-line descriptions and per-mode side options; **red Gemini consent checkbox** (default OFF; paid-key bypass) with training disclosure; per-engine **quota countdown** rows; Models tab with download button + honest state copy (not-downloaded/downloading-paused/verifying/ready/failed/disk-space-error).
+- **Session UX:** first-run guidance dialog (kind, one-time; never downloads on hotkey), focus-guard overlay (Resume / Copy / Discard; Escape=Resume), quota/no-silent-failover choice dialog, LIVE raw-output notice (no translation/cleanup — Polish/Translate is the escape hatch), status vocabulary mapped onto the 4-palette `set_status`.
+- **Polish:** tray menu item "Polish last dictation"; safe insert + clipboard is the default; "replace in place" is explicitly experimental.

@@ -57,7 +57,8 @@ Hexagonal-light **mixin architecture** on a single desktop process (no server, n
 
 ## 5. Known Debt / Constraints (honest)
 
-- `llm_api.py` was 374 ln (> 350 gate) — **RESOLVED** 2026-11-16 (T-2026-11-16-provider-presets): pure wire-format code extracted to `llm_payloads.py` (157 ln); `llm_api.py` now 349 ln. All modules ≤350 (providers.py 349, settings_view.py 335, main.py 337, config_manager.py 269).
+- `llm_api.py` was 374 ln (> 350 gate) — **RESOLVED** 2026-11-16 (T-2026-11-16-provider-presets): pure wire-format code extracted to `llm_payloads.py` (157 ln); `llm_api.py` now 342 ln.
+- **Dictation-modes debt (T-2026-11-16-dictation-modes, shipped 2026-11-17):** HN-DICT-01 `dictation_session.py` 823 ln (cap waived ≤850 — **mandatory extraction into `dictation_runtime.py` post-ship**); HN-DICT-02 `model_store.py` 532 ln (waived, scheduled refactor). The ≤350 gate is a **Python-module** review signal — workflow/manifest config files (`release.yml` 451 ln etc.) are exempt (recorded R-8). Remaining modules within budget (providers 350, main 360 wiring-capped per R-5/R-7, settings family ≤350 each).
 - Linux API-key at-rest protection is obfuscation (`base64:`), not encryption (no stdlib DPAPI equivalent) — documented, accepted.
 - `app_logging` log-dir fallback is Windows-shaped on Linux (pre-existing cosmetic issue).
 - Wayland-only Linux sessions unsupported (X11 required for hotkeys/paste).

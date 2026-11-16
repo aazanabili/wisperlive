@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0",
+  "task_id": "T-2026-11-16-dictation-modes",
+  "lineage_id": "L-dictation-modes-1",
+  "run_id": "20261116T225045Z",
+  "started_at_utc": "2026-11-16T22:50:45Z",
+  "role": "qa-test-assurance",
+  "risk_tier": "Tier 3",
+  "policy_version": "3.0.0-OPENCODE",
+  "runner": "venv\\Scripts\\python.exe -m unittest discover -v",
+  "platform": "win32 (Python 3.14, venv without ML extras: faster_whisper/ctranslate2/onnxruntime/websocket absent)",
+  "state_fingerprint": {
+    "base_revision": "a6b2f45878186b34b81806646573dfde298c33f7",
+    "revision_after": "a6b2f45878186b34b81806646573dfde298c33f7",
+    "silent_commit_detected": false,
+    "qa_delta_scope": {
+      "modified_test_files": [
+        "test_config_manager.py",
+        "test_llm_api.py",
+        "test_main_processing.py",
+        "test_settings_view.py",
+        "test_updater.py",
+        "test_views_startup_split.py"
+      ],
+      "created_test_files": [
+        "test_dictation_types.py",
+        "test_llm_errors.py",
+        "test_quota_ledger.py",
+        "test_model_manifest.py",
+        "test_session_state.py",
+        "test_dictation_config.py",
+        "test_pcm_stream.py",
+        "test_vad_segmenter.py",
+        "test_local_engine.py",
+        "test_chunked_engine.py",
+        "test_whisper_http.py",
+        "test_typer_actor.py",
+        "test_focus_guard.py",
+        "test_polish_engine.py",
+        "test_model_store.py",
+        "test_live_local_engine.py",
+        "test_live_cloud_engine.py",
+        "test_smoke.py"
+      ],
+      "production_files_touched_by_qa": [],
+      "ownership_gate": "PASS (only tests/* + artifacts/qa-reports/** written; no git commit/reset/clean; no secrets read)"
+    },
+    "pre_existing_working_tree_observation": "test_providers.py was already modified in the working tree BEFORE this run (purity-guard allowlist widened by '+dictation_config', citing plan R-3 Option D). Reviewed by QA as consistent with the recorded orchestrator ruling; NOT authored by QA; flagged for the orchestrator's acceptance gate."
+  },
+  "totals": {
+    "baseline_tests": 250,
+    "baseline_skips": 9,
+    "final_tests": 632,
+    "final_skips": 10,
+    "final_pass": 620,
+    "final_fail": 2,
+    "final_errors": 0,
+    "delta_tests": 382,
+    "delta_accounting": "354 tests in 18 new suites + 28 added to 6 modified suites (config_manager +9, main_processing +14, llm_api +3, updater +2, settings_view 1 replaced per R-U7, views_startup_split widened-in-place)",
+    "runs_executed": 3,
+    "flaky_result_observed": false,
+    "new_env_gated_skips": 1,
+    "skip_note": "10 = 9 baseline env-gated (X11/Linux/single-instance) + 1 new HAVE_EXTRAS-gated (test_local_engine.test_start_reaches_the_missing_model_guard_when_extras_exist, requires requirements-ml.txt installed)"
+  },
+  "per_suite": [
+    {"suite": "test_app_logging", "tests": 4, "result": "OK", "origin": "baseline"},
+    {"suite": "test_audio_recorder", "tests": 18, "result": "OK", "origin": "baseline"},
+    {"suite": "test_auto_typer", "tests": 8, "result": "OK", "origin": "baseline"},
+    {"suite": "test_chunked_engine", "tests": 20, "result": "OK", "origin": "new"},
+    {"suite": "test_config_manager", "tests": 27, "result": "OK", "origin": "modified (+9: M13-M23 boundary, K1-K8 boundary, T11, G5 DPAPI/base64)"},
+    {"suite": "test_dictation_config", "tests": 28, "result": "OK", "origin": "new"},
+    {"suite": "test_dictation_types", "tests": 25, "result": "OK", "origin": "new"},
+    {"suite": "test_focus_guard", "tests": 17, "result": "OK", "origin": "new"},
+    {"suite": "test_linux_hotkey", "tests": 13, "result": "OK (skipped=3)", "origin": "baseline"},
+    {"suite": "test_live_cloud_engine", "tests": 17, "result": "OK", "origin": "new"},
+    {"suite": "test_live_local_engine", "tests": 26, "result": "OK", "origin": "new"},
+    {"suite": "test_llm_api", "tests": 54, "result": "OK", "origin": "modified (+3 re-export identity pins)"},
+    {"suite": "test_llm_errors", "tests": 11, "result": "OK", "origin": "new"},
+    {"suite": "test_llm_payloads", "tests": 14, "result": "OK", "origin": "baseline"},
+    {"suite": "test_local_engine", "tests": 19, "result": "OK (skipped=1 env-gated)", "origin": "new"},
+    {"suite": "test_main_processing", "tests": 36, "result": "FAIL (1 failing pin)", "origin": "modified (+14 session/G1/G4/G5 tests, +1 failing defect pin)"},
+    {"suite": "test_model_manifest", "tests": 18, "result": "OK", "origin": "new"},
+    {"suite": "test_model_store", "tests": 22, "result": "OK", "origin": "new"},
+    {"suite": "test_pcm_stream", "tests": 17, "result": "OK", "origin": "new"},
+    {"suite": "test_polish_engine", "tests": 22, "result": "OK", "origin": "new"},
+    {"suite": "test_providers", "tests": 38, "result": "OK", "origin": "baseline (working-tree modified pre-QA, see fingerprint)"},
+    {"suite": "test_quota_ledger", "tests": 21, "result": "OK", "origin": "new"},
+    {"suite": "test_session_state", "tests": 12, "result": "OK", "origin": "new"},
+    {"suite": "test_settings_view", "tests": 22, "result": "FAIL (1 failing K7 pin)", "origin": "modified (test_api_key_survives_provider_switches replaced per R-U7)"},
+    {"suite": "test_single_instance", "tests": 8, "result": "OK (skipped=1)", "origin": "baseline"},
+    {"suite": "test_smoke", "tests": 11, "result": "OK", "origin": "new"},
+    {"suite": "test_startup_registration", "tests": 14, "result": "OK (skipped=5)", "origin": "baseline"},
+    {"suite": "test_typer_actor", "tests": 29, "result": "OK", "origin": "new"},
+    {"suite": "test_ui_dispatch", "tests": 3, "result": "OK", "origin": "baseline"},
+    {"suite": "test_updater", "tests": 4, "result": "OK", "origin": "modified (+APP_MODULES 17->41, print-exempt documented for smoke.py, +G5 static log-scrape + consent copy)"},
+    {"suite": "test_vad_segmenter", "tests": 22, "result": "OK", "origin": "new"},
+    {"suite": "test_views_startup_split", "tests": 7, "result": "OK", "origin": "modified (acyclicity set widened to all 41 modules)"},
+    {"suite": "test_whisper_http", "tests": 17, "result": "OK", "origin": "new"},
+    {"suite": "test_windows_hotkey", "tests": 8, "result": "OK", "origin": "baseline"}
+  ],
+  "gates": {
+    "G1_concurrency": {
+      "verdict": "PASS",
+      "evidence": [
+        "test_main_processing.StopDuringBacklogTests: bounded ordered drain (emission_seq 0..n-1 gapless, segment_seq sorted, <15s) incl. Arabic+English scripts",
+        "test_main_processing.QuitMidDrainTests: M2 extension - abort mid-drain clears emissions, typer.abort called, zero paste, zero submissions after abort, call_in_ui completion suppressed",
+        "test_main_processing.SessionSnapshotThreadingTests: mid-session config edits never reach the frozen SessionConfig (frozen instance, least-privilege api_keys)",
+        "test_main_processing.PublishIdempotenceTests: duplicate _publish dropped at pending/failed membership + idempotent re-drain",
+        "test_main_processing.WordTrimPropertyTests: Arabic + English seam words kept EXACTLY once across adjacent units",
+        "test_typer_actor.OrderedEmissionTests: out-of-order arrival typed strictly in order, duplicate replays dropped, buffered gap, declared-lost skip after max_gap",
+        "test_pcm_stream/test_vad_segmenter: bounded BlockQueue/PcmRing and D5 disjoint-span/trim behavior"
+      ]
+    },
+    "G2_injection": {
+      "verdict": "PASS",
+      "evidence": [
+        "test_typer_actor.UnicodeInjectionTests: mocked _send_input_batch asserts KEYEVENTF_UNICODE down/up pairs per UTF-16 unit for Arabic + surrogate emoji, wVk=0, half-sent batch raises PasteError, batch chunking at MAX_INPUT_EVENTS",
+        "test_typer_actor: abort / app.is_exiting freeze returns SUPPRESSED before the first keystroke (zero injection after exit)",
+        "test_focus_guard: focus change -> FocusLostError with retained backlog (typer side), LLKHF_INJECTED self-filter (injected keys never invalidate, real keys do), AST pin that the hook proc dispatches notify_key_event(bool(flags & LLKHF_INJECTED))",
+        "test_polish_engine: replace only on PROVEN span (mode+windows+focus+TTL) else safe insert; failed tap_back never half-replaces",
+        "test_typer_actor.SessionClipboardRestoreTests: exactly ONE restore per session, user copy never clobbered (equality guard), no restore timer in streaming path, exiting skips restore"
+      ]
+    },
+    "G3_supply_chain": {
+      "verdict": "PASS",
+      "placeholder_digest_finding": "NONE - assets/models_manifest.json parses and every file pin is 64-lowercase-hex with size>0 and https mirrors (test_model_manifest.ShippedManifestPinTests + smoke [OK] pins)",
+      "evidence": [
+        "test_model_manifest: tampered-digest rejection (streaming DigestVerifier, constant-time compare via hmac.compare_digest pin), malformed expectation NEVER matches",
+        "test_model_manifest: traversal-UNSAFE install paths rejected (absolute, '..', '.', drive letters, empty segments); H4 https/no-userinfo/no-query/no-fragment URLs; mirror ORDER preserved primary-first",
+        "test_model_store.ResumeTests: Range+If-Range resume where resumed bytes JOIN the streamed digest -> verify-then-install; tampered resume fails closed (no install, .part reset); corrupt resume falls to the next ordered mirror",
+        "test_model_store: disk preflight x1.2 before the first byte, atomic os.replace install, bounded 3-tries-per-mirror fallback, placeholder zero-digest fails closed with ZERO network, .part GC keeps fresh parts (kill/restart resume) and removes stale/manifest-less",
+        "test_model_store.RecheckTests: on-disk tamper detected by re_check_file -> local_models stale + SHA-256 failure copy",
+        "test_smoke: placeholder manifest flips smoke to exit 1"
+      ]
+    },
+    "G4_quota": {
+      "verdict": "PASS",
+      "evidence": [
+        "test_whisper_http: HTTP 429 with Retry-After / x-ratelimit-reset -> LLMQuotaError(engine_id=groq-whisper, HH:MM hint); header-less 429 keeps the legacy generic LLMError copy (NOT misclassified); exactly one send per failure (H6 no-retry)",
+        "test_quota_ledger: Groq 10s floor math, dispatch-vs-unit window semantics, atomic admission+reserve under budget-of-one, mark_exhausted + HH:MM hint from INJECTED clock, derived pause, honest -1 for unknown limits",
+        "test_chunked_engine.QuotaPropagationTests: transport 429 passes through LLMQuotaError untouched, single dispatch, config.chunked_engine never rewritten (no engine substitution)",
+        "test_main_processing.QuotaNoSilentFailoverTests: quota_limits day=1 -> exactly ONE engine dispatch, quota_exhausted notice with options ('local','finish_at_stop','abort_with_clipboard'), session engine id unchanged",
+        "test_live_cloud_engine: bounded backoff (<= MAX_RECONNECTS, exponential+jitter window) with D6 degraded_sink unit_error - never infinite, never silent"
+      ]
+    },
+    "G5_secrets_privacy": {
+      "verdict": "PASS",
+      "evidence": [
+        "test_config_manager: real DPAPI round-trip on this Windows host (pre-existing test_roundtrip_never_writes_raw_api_key) + Windows-guarded fake-DPAPI vendor-map round trip (dpapi: envelopes only, plaintext never on disk)",
+        "test_config_manager.G5 base64 fallback: patched non-Windows load emits exactly ONE aggregated warning carrying the COUNT (2) and 'obfuscation only', never key bytes",
+        "test_updater.SecretsAndLogScrapeTests (static): AST sweep of logger calls across all 24 new modules - no text/transcript/api_key/key/secret/token/pcm/audio/payload/frame/words/phrase-named argument and no f-string interpolation",
+        "test_main_processing.RuntimeLogScrapeTests (runtime): full session drains with SENTINEL transcript (incl. Arabic) + sk-GHA-SENTINEL key in live config and in an LLMError message -> zero log records contain either; capture proven non-vacuous",
+        "test_whisper_http/test_llm_api: keys/sizes/hosts only in log lines; safe_url_for_log strips userinfo/query/fragment",
+        "consent disclosure: test_updater pins CONSENT_COPY/PAID_KEY_COPY verbatim, validate_save blocks gemini-live without consent OR paid attestation, DEFAULT_CONFIG gemini_consent/paid False (U2 fail-closed)"
+      ]
+    },
+    "G6_packaging": {
+      "verdict": "PASS",
+      "evidence": [
+        "test_smoke.SmokeRunTests: smoke.run() exits 0 on this checkout (core imports, manifest pins, providers registry); sabotaged core import -> exit 1; placeholder digest -> exit 1",
+        "test_smoke.SmokeEntryPointTests (subprocess): venv\\Scripts\\python.exe smoke.py exit 0 AND python main.py --smoke exit 0 before any Tk init / instance lock (R-U5/R-8c)",
+        "test_smoke.ImportFailureHidesModesTests: local_deps_available is find_spec-only (never heavy import, failures -> False), local preflight missing extras -> EngineUnavailableError with requirements-ml reason + maybe_start rejected via status+beep with state IDLE (never crashes), missing model -> ModelNotDownloadedError naming Settings",
+        "test_live_cloud_engine.TransportMissingTests: absent websocket-client -> EngineUnavailableError before any socket/thread, session preflight fails closed, maybe_start never crashes",
+        "test_updater/test_views_startup_split: all 41 production modules exist, acyclic (no module imports main), print-only guard satisfied (smoke.py documented exempt)"
+      ]
+    }
+  },
+  "defects_found": [
+    {
+      "id": "QA-DICT-1",
+      "severity": "high",
+      "gate": "K7 secret misattribution (G5 adjacent)",
+      "failing_pin": "test_settings_view.ProviderChangeTests.test_api_key_rehydrates_per_vendor_on_provider_switch_k7",
+      "evidence": "AssertionError: 'sk-precious' != '' at test_settings_view.py:242 (single-test run FAILED, deterministic across 3 full runs)",
+      "root_cause": "settings_provider_view.apply_provider_change never implements the A3 K7 dialog contract: it neither files the typed key under the ORIGIN vendor slot (config_manager.set_vendor_key) nor re-hydrates key_var from the NEW vendor slot (config_manager.get_vendor_key); the comment 'api_key is never touched here' documents the pre-K7 behavior",
+      "impact": "A key typed for provider A is carried (and on Save mis-filed) under provider B - the exact K7 misattribution hazard the contract exists to prevent; authorship per A3: 'A5/Worker contract'",
+      "owner": "worker-executor (production fix) -> qa-test-assurance re-verify",
+      "plan_reference": "plan R-U7 + A3 K7 (proposals/A3-dictation-modes-contracts.md line 257) + A5A7 row 474",
+      "status": "PINNED_FAILING (not fixed by QA - test-only writer)"
+    },
+    {
+      "id": "QA-DICT-2",
+      "severity": "medium",
+      "gate": "engine-defect disposition (D6 degraded path)",
+      "failing_pin": "test_main_processing.EngineDefectDispositionTests.test_engine_defect_is_dispositioned_and_the_handler_never_crashes",
+      "evidence": "UnboundLocalError: cannot access local variable 'error' where it is not associated with a value at dictation_session.py:709 (chained after RuntimeError from a fake engine defect); single-test run FAILED, deterministic",
+      "root_cause": "dictation_session.DictationSession._process_one's generic `except Exception:` handler reads the name `error`, which is only bound `as error` in the TYPED clauses above it (LLMConfigError/LLMError/DictationError) and unbound at handler entry",
+      "impact": "An engine defect (non-typed exception) raises from the handler instead of dispositioning the unit: the worker thread dies, the segment is never marked failed, and the unit_error degraded notice (D6) is never recorded - contradicting the handler's own 'CONTINUE the rest' contract (A6 s2.3)",
+      "owner": "worker-executor (production fix: `except Exception as error:`) -> qa-test-assurance re-verify",
+      "plan_reference": "A6 s2.3 unit disposition + D6 never-silent",
+      "status": "PINNED_FAILING (not fixed by QA - test-only writer)"
+    }
+  ],
+  "pre_existing_pins_kept_green": {
+    "count": 250,
+    "note": "All 250 baseline tests remain green (verified in 3 full-suite runs). One baseline test was INTENTIONALLY replaced by design, not lost: test_api_key_survives_provider_switches -> test_api_key_rehydrates_per_vendor_on_provider_switch_k7 per plan R-U7 / A5A7 row 474 (K7 changes that behavior by design; the replacement is the failing pin above)."
+  },
+  "status": "FAIL",
+  "status_rationale": "8-state precedence: FAIL outranks PASS/PARTIAL - 2 deterministic failing tests pin 2 confirmed production defects (QA-DICT-1 K7 dialog wiring missing, QA-DICT-2 unbound `error` in _process_one). Everything else green: 632 tests, 620 pass, 10 env-gated skips, 0 errors, 0 flaky across 3 runs; gates G1-G6 all PASS on their own evidence. Route both pins to worker-executor, then re-run this gate.",
+  "artifacts": {
+    "report_path": "artifacts/qa-reports/T-2026-11-16-dictation-modes/20261116T225045Z/report.json"
+  }
+}

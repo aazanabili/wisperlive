@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0",
+  "task_id": "T-2026-11-16-dictation-modes",
+  "lineage_id": "L-dictation-modes-1",
+  "run_id": "20261116T230125Z",
+  "supersedes_run_id": "20261116T225045Z",
+  "run_kind": "QA GATE RE-RUN after repair cycle 1/3",
+  "started_at_utc": "2026-11-16T23:01:25Z",
+  "role": "qa-test-assurance",
+  "risk_tier": "Tier 3",
+  "policy_version": "3.0.0-OPENCODE",
+  "runner": "venv\\Scripts\\python.exe -m unittest discover -v",
+  "platform": "win32 (Python 3.14, venv without ML extras: faster_whisper/ctranslate2/onnxruntime/websocket absent)",
+  "state_fingerprint": {
+    "base_revision": "a6b2f45878186b34b81806646573dfde298c33f7",
+    "revision_after": "a6b2f45878186b34b81806646573dfde298c33f7",
+    "silent_commit_detected": false,
+    "qa_delta_this_turn": "NONE — no test file and no production file written by QA in this re-run (pins stand as written); only this report.json added",
+    "repair_delta_reviewed": {
+      "production_fixes": [
+        "dictation_session.py — _process_one generic handler now `except Exception as error:` (QA-DICT-2)",
+        "settings_provider_view.py — apply_provider_change K7 (a) set_vendor_key(origin) + (b) get_vendor_key(new) rehydration; save-files-active-slot; Cancel/Escape restores the open-state api_keys_protected reference (QA-DICT-1)"
+      ],
+      "test_files_modified_by_worker": "NONE detected — all 6 QA-modified test files carry only the QA-authored cycle-1 diffs; pins unchanged"
+    },
+    "ownership_gate": "PASS (tests/artifacts scope only; no git commit/reset/clean; no secrets read)"
+  },
+  "totals": {
+    "final_tests": 632,
+    "final_pass": 622,
+    "final_skips": 10,
+    "final_fail": 0,
+    "final_errors": 0,
+    "runs_executed_this_gate": 3,
+    "deterministic": true,
+    "flaky_result_observed": false,
+    "skip_note": "10 env-gated skips = 9 baseline (X11/Linux/single-instance) + 1 HAVE_EXTRAS-gated (test_local_engine missing-model guard requires requirements-ml.txt) — all pre-declared, none in the repaired areas"
+  },
+  "repaired_area_reverification": {
+    "QA-DICT-1_K7_rehydration": {
+      "pin": "test_settings_view.ProviderChangeTests.test_api_key_rehydrates_per_vendor_on_provider_switch_k7",
+      "result": "PASS",
+      "flow_verified_unmodified_pin": [
+        "typed key filed under ORIGIN vendor slot (custom) via set_vendor_key",
+        "key_var rehydrates to '' on switch to a slot-less vendor (no carry-across)",
+        "vendor WITH a stored key rehydrates that exact key (gsk-stored)",
+        "switch back restores the origin vendor's own key",
+        "no vendor slot leaks another vendor's key"
+      ],
+      "discard_restore_semantics": "test_settings_view.DiscardTests (Escape + Cancel) PASS — config equals pre-dialog state after K7 in-dialog slot writes (open-state api_keys_protected reference restored)"
+    },
+    "QA-DICT_2_unit_error_disposition": {
+      "pin": "test_main_processing.EngineDefectDispositionTests.test_engine_defect_is_dispositioned_and_the_handler_never_crashes",
+      "result": "PASS",
+      "verified": [
+        "no UnboundLocalError — handler binds the defect exception",
+        "segment dispositioned: status='failed', error_kind='RuntimeError' (taxonomy only)",
+        "unit_error degraded notice recorded (D6)",
+        "seq lands in session._failed so the drain can finish; worker contract 'CONTINUE the rest' intact"
+      ],
+      "regression_sweep": "test_main_processing 36/36 and test_settings_view 22/22 green (incl. G1 ordered-drain, quit-mid-drain zero injection, quota no-failover, runtime log-scrape)"
+    }
+  },
+  "per_suite": [
+    {"suite": "test_app_logging", "tests": 4, "result": "OK"},
+    {"suite": "test_audio_recorder", "tests": 18, "result": "OK"},
+    {"suite": "test_auto_typer", "tests": 8, "result": "OK"},
+    {"suite": "test_chunked_engine", "tests": 20, "result": "OK"},
+    {"suite": "test_config_manager", "tests": 27, "result": "OK"},
+    {"suite": "test_dictation_config", "tests": 28, "result": "OK"},
+    {"suite": "test_dictation_types", "tests": 25, "result": "OK"},
+    {"suite": "test_focus_guard", "tests": 17, "result": "OK"},
+    {"suite": "test_linux_hotkey", "tests": 13, "result": "OK (skipped=3)"},
+    {"suite": "test_live_cloud_engine", "tests": 17, "result": "OK"},
+    {"suite": "test_live_local_engine", "tests": 26, "result": "OK"},
+    {"suite": "test_llm_api", "tests": 54, "result": "OK"},
+    {"suite": "test_llm_errors", "tests": 11, "result": "OK"},
+    {"suite": "test_llm_payloads", "tests": 14, "result": "OK"},
+    {"suite": "test_local_engine", "tests": 19, "result": "OK (skipped=1 env-gated)"},
+    {"suite": "test_main_processing", "tests": 36, "result": "OK (QA-DICT-2 pin green)"},
+    {"suite": "test_model_manifest", "tests": 18, "result": "OK"},
+    {"suite": "test_model_store", "tests": 22, "result": "OK"},
+    {"suite": "test_pcm_stream", "tests": 17, "result": "OK"},
+    {"suite": "test_polish_engine", "tests": 22, "result": "OK"},
+    {"suite": "test_providers", "tests": 38, "result": "OK (pre-QA working-tree edit, cycle-1 noted)"},
+    {"suite": "test_quota_ledger", "tests": 21, "result": "OK"},
+    {"suite": "test_session_state", "tests": 12, "result": "OK"},
+    {"suite": "test_settings_view", "tests": 22, "result": "OK (QA-DICT-1 pin + DiscardTests green)"},
+    {"suite": "test_single_instance", "tests": 8, "result": "OK (skipped=1)"},
+    {"suite": "test_smoke", "tests": 11, "result": "OK"},
+    {"suite": "test_startup_registration", "tests": 14, "result": "OK (skipped=5)"},
+    {"suite": "test_typer_actor", "tests": 29, "result": "OK"},
+    {"suite": "test_ui_dispatch", "tests": 3, "result": "OK"},
+    {"suite": "test_updater", "tests": 4, "result": "OK"},
+    {"suite": "test_vad_segmenter", "tests": 22, "result": "OK"},
+    {"suite": "test_views_startup_split", "tests": 7, "result": "OK"},
+    {"suite": "test_whisper_http", "tests": 17, "result": "OK"},
+    {"suite": "test_windows_hotkey", "tests": 8, "result": "OK"}
+  ],
+  "gates": {
+    "G1_concurrency": {"verdict": "PASS", "note": "re-validated by green full runs; ordered drain / quit-mid-drain zero injection / snapshot immutability / dup-publish dedupe / Arabic+English trim all green"},
+    "G2_injection": {"verdict": "PASS", "note": "Arabic UNICODE mocked payload, is_exiting/abort freeze, LLKHF_INJECTED self-filter, proven-span replace, single clipboard restore all green"},
+    "G3_supply_chain": {"verdict": "PASS", "note": "manifest pins real (no placeholder digests), tamper rejection, resume-then-verify, traversal/URL hygiene all green"},
+    "G4_quota": {"verdict": "PASS", "note": "429->LLMQuotaError+HH:MM vs legacy copy, exhaustion+hint, atomic reserve, one-dispatch no-failover, bounded WS backoff all green"},
+    "G5_secrets_privacy": {"verdict": "PASS", "note": "K7 rehydration now ALSO green (per-vendor isolation proven); DPAPI/base64 count-only, static AST + runtime sentinel log-scrape, consent copy green"},
+    "G6_packaging": {"verdict": "PASS", "note": "smoke.py + main.py --smoke exit 0, import-failure paths hide modes without crashing, 41-module acyclicity/exists green"}
+  },
+  "defects_found": [],
+  "pre_existing_pins_kept_green": {
+    "count": 250,
+    "note": "All 250 baseline pins green; R-U7 replacement pin (K7) green post-repair. Zero pins weakened/modified this gate."
+  },
+  "status": "PASS",
+  "status_short": "PASS_WITH_SKIPS",
+  "status_rationale": "8-state precedence: no STALE/FAIL/FLAKY/TIMEOUT/PLATFORM_REQUIRED/BLOCKED/PARTIAL condition — 3 consecutive full runs identical: 632 tests, 622 pass, 0 fail, 0 errors, 10 pre-declared env-gated skips (labeled PASS_WITH_SKIPS for shorthand); both cycle-1 defect pins verified green against UNMODIFIED test files; defects_found empty.",
+  "artifacts": {
+    "report_path": "artifacts/qa-reports/T-2026-11-16-dictation-modes/20261116T230125Z/report.json"
+  }
+}

@@ -50,3 +50,7 @@
 | `transcription_model` | str | stage-1 model when the preset uses split models (MiMo: `mimo-v2.5-asr`); empty ⇒ fall back to `model` |
 
 Provider presets are pure static data (`providers.py`); the resolved URL is always persisted into `provider_base_url` so downstream consumers (`main.py`, `llm_api.py`) keep a single source of truth. No new secrets, no new stores.
+
+## 5. Shipped Delta 2 (T-2026-11-16-dictation-modes — implemented 2026-11-17)
+
+New stores/flows: **model store** (`%LOCALAPPDATA%\WhisperLive\models` / XDG — SHA-256-pinned `assets/models_manifest.json`, atomic installs, `.part` resume sidecars, mirror fallback HF→hf-mirror→jsdelivr); **quota ledger** (persisted per-engine counters, `quota_limits` config overrides); **per-vendor secrets map** `api_keys_protected` (DPAPI per entry, Linux `base64:` warned, K1–K8 migration over 2 releases from the single-key scheme); new config keys (`dictation_mode` default `"local"`, `cleanup_mode` default `"cloud"`, `model_size`, `chunked_engine`, `chunked_asr_model`, `live_engine`, `polish_mode`, `gemini_consent` default False, `gemini_paid_key_confirmed`, `cleanup_model`, `model_store_dir`, `local_models`, `quota_limits`). Session audio lives in memory (≤32MB ring) — no temp-WAV sprawl in the new modes (classic flow unchanged).

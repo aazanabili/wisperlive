@@ -1,0 +1,153 @@
+{
+  "schema_version": "1.0",
+  "task_id": "T-2026-11-16-dictation-modes",
+  "lineage_id": "L-dictation-modes-1",
+  "run_id": "20261116T230956Z",
+  "run_kind": "SECOPS FINAL ADVERSARIAL DIFF AUDIT (Tier 3 release gate)",
+  "started_at_utc": "2026-11-16T23:09:56Z",
+  "role": "secops-auditor",
+  "risk_tier": "Tier 3",
+  "policy_version": "3.0.0-OPENCODE",
+  "scope": {
+    "delta": "uncommitted working tree vs base a6b2f45 (20 modified + 44 new files; production + tests)",
+    "policies": [
+      ".opencode/rules/02-cross-platform-security-policy.md (A/B/C/D/E2/I/J)",
+      ".opencode/rules/01-clean-code-policy.md (Gate 1)",
+      "skills: deep-security-hunting, clean-hexagonal-enforcer"
+    ],
+    "qa_evidence": "artifacts/qa-reports/T-2026-11-16-dictation-modes/20261116T230125Z/report.json (632 tests, 622 pass, 10 env-gated skips, G1-G6 PASS)"
+  },
+  "ownership_gate": "PASS (SECURITY_EVIDENCE_MATRIX.md + artifacts/secops-reports/** only; no production/test writes; no git commit/reset/clean; no secrets read)",
+  "attack_simulations_executed": [
+    "crafted manifest (traversal path / http mirror / userinfo URL / placeholder digest) -> parse_manifest raises, model_store refuses install",
+    "tampered .part resumed mid-download -> resumed bytes join the streamed digest -> mismatch -> reset -> mirror fallback; final digest+size gate before os.replace; post-rename reverify",
+    "manifest model.bin sha256 spot-check vs live Hugging Face LFS oid (Systran/faster-whisper-base@ebe41f7) -> byte-identical",
+    "LLKHF_INJECTED spoof analysis: foreign SendInput / WM_CHAR input does not invalidate polish spans (filter cannot distinguish self vs foreign injection)",
+    "focus switch race between focus_guard.check() and SendInput -> at-most-one-emission misdelivery window (inherent SendInput TOCTOU)",
+    "quota double-spend with 2 workers over budget of 1 -> admission+reserve atomic under self._cond",
+    "Gemini consent bypass via config coercion ('yes'/1/'true') -> M20 literal-True normalization -> false; via live/chunked engines -> ConsentRequiredError before connect",
+    "secret leak via log/exception/URL: full call-site inventory + QA runtime sentinel scrape (Arabic transcript + key sentinels incl. error path) -> zero leaks",
+    "import-graph cycle DFS across all 41 root modules -> NONE; AST purity of 8 pure leaves -> stdlib-only"
+  ],
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "MEDIUM",
+      "classification": "confirmed",
+      "kind": "control defect (supply-chain gate durability)",
+      "title": "CI 7-day cooldown checker silently skips every pin carrying an inline comment",
+      "evidence": ".github/workflows/release.yml 'Dependency release-age cooldown (7d)' step: lines are processed as `line.split(';')[0].strip()` (strips environment markers only) then matched with `^([A-Za-z0-9_.\\-]+)==([\\w.\\-]+)$` which requires end-of-line after the version. All 6 pins in requirements-ml.txt carry inline `# [V] ...` comments (faster-whisper==1.2.1, ctranslate2==4.8.5, onnxruntime==1.31.1, av==18.1.0, tokenizers==0.23.3, huggingface-hub==0.36.2) -> ALL are silently excluded; the job prints 'checked N pins' without flagging skips. The one new clean pin (websocket-client==1.9.2) IS checked.",
+      "exploitable_today": false,
+      "current_state_verification": "No present violation: every requirements*.txt pin is >= 7 days old (in-file [V] date evidence; auditor independently verified websocket-client==1.9.2 upload time 2026-08-31 via PyPI JSON = ~78d).",
+      "impact": "A future dependency change written with an inline comment bypasses the automated cooldown gate entirely, defeating policy rules/01 s20 / I2 enforcement-by-default.",
+      "minimal_fix": "Strip inline comments before matching: `line = line.split('#')[0].split(';')[0].strip()`, and count/print skipped non-empty pin-like lines instead of silently ignoring them. Optionally fail when 0 pins match.",
+      "blocks_release": false,
+      "mandate": "Fix REQUIRED before the next dependency addition/upgrade (tracked as HN-DICT-03). If release policy treats CI gate soundness as blocking in itself, escalate verdict to FAIL."
+    },
+    {
+      "id": "F-2",
+      "severity": "LOW-MEDIUM",
+      "classification": "hardening_note (privacy-consistency gap; outside documented U2 scope)",
+      "title": "U2 Gemini consent gate does not cover stage-2 cleanup / Polish cloud cleanup routed to the google-gemini chat preset",
+      "evidence": "dictation_session.preflight gates Gemini only at the documented U2 enforcement points (chunked engine resolved == 'google-gemini' :216-217; live engine gemini-live :386-387; plan/A3 proposal scope = 'Gemini engines'). But cleanup_mode='cloud' stage-2 (chunked_engine._cleanup -> llm_api.post_process_text with api_keys[provider_id]) and polish_engine.polish_last cloud path send the FULL TRANSCRIPT to the current chat provider; providers registry contains a selectable 'google-gemini' preset (providers.py:98). Free-tier training exposure is exactly the risk U2 gates (A6 proposal V2c).",
+      "exploitable_today": "User must select google-gemini as chat provider themselves; the same flow pre-exists in the classic pipeline (accepted at the provider-presets gate) and is arguably user-elected. No attacker input required.",
+      "impact": "Transcript reaches Google free tier (may train) without the red consent disclosure gate that the live/chunked Gemini ENGINES require.",
+      "minimal_fix": "Extend _require_gemini_consent to the cleanup stage when providers.resolve_provider_id(provider) == 'google-gemini' (local + chunked modes and polish_last cloud path), or state the cleanup exposure in the consent copy.",
+      "blocks_release": false,
+      "mandate": "Orchestrator/user product decision (HN-DICT-04)."
+    },
+    {
+      "id": "F-3",
+      "severity": "LOW",
+      "classification": "hardening_note",
+      "title": "model_store post-install verification result is discarded; pre-existing files activate on presence-only",
+      "evidence": "model_store.py:203 calls self._reverify(model_id, version_dir) and ignores its return value before self._activate(...) at :204, contradicting the adjacent comment ('re-hash installed bytes before activation — never trusted on the file name alone'). Also :182-185: when all manifest files are present (any content), _download_one activates without digest verification (by-design bounded boot: _refresh_installed checks presence+size only; full hashing is the user-triggered re_check_file).",
+      "exploitable_today": false,
+      "reasoning": "Pre-rename digest+size gate (:265) already guarantees pinned bytes at install time; changing files afterwards requires local same-user write access to the model store dir (D1 client-trust: such an attacker can edit any app file). Network/manifest adversaries cannot reach this state.",
+      "minimal_fix": "raise _StoreError('failed', ...) when _reverify returns False at :203 (one line).",
+      "blocks_release": false
+    },
+    {
+      "id": "F-4",
+      "severity": "LOW",
+      "classification": "hardening_note",
+      "title": "LLKHF_INJECTED self-filter cannot distinguish own vs foreign injected keys; WM_CHAR/PostMessage text never hits the hook",
+      "evidence": "focus_guard.py:247-255 filters info.flags & LLKHF_INJECTED; the flag is set by win32k for EVERY process's SendInput output, so a background automation tool (AutoHotkey, clipboard managers, IME helpers) typing into the target document does NOT invalidate polish spans, and text delivered via WM_CHAR/PostMessage never reaches WH_KEYBOARD_LL at all. Docstring (:17-18) over-claims 'OUR OWN SendInput output'.",
+      "exploitable_today": "Requires a same-user background automation process editing the same document (D1 local attacker class) AND the user later invoking polish replace-experimental / select-back.",
+      "impact_bounded_by": "default polish_mode='insert' (no select-back), replace-experimental opt-in + on_windows + focus_unchanged PROOF + 10-min TTL + span invalidated by every physical key + spans registered only after successful injection + auto-fallback to insert on any doubt.",
+      "minimal_fix": "Correct the docstring; optionally compare dwExtraInfo to a per-session magic marker set on our SendInput events (still spoofable by same-user code) — or accept and document.",
+      "blocks_release": false
+    },
+    {
+      "id": "F-5",
+      "severity": "LOW",
+      "classification": "hardening_note / accepted residual",
+      "title": "Focus guard check -> SendInput micro-race can misdeliver at most one emission",
+      "evidence": "typer_actor.guarded_emit (:146-178) checks focus then sends the phrase; a window switch between check() and the SendInput batch lands that one phrase in the new foreground window. SendInput cannot atomically bind to a target hwnd (inherent platform TOCTOU).",
+      "impact_bounded_by": "per-emission re-check (next emission raises FocusLostError and is RETAINED for resume/copy); abort/is_exiting double-check; one phrase maximum per race.",
+      "blocks_release": false
+    },
+    {
+      "id": "F-6",
+      "severity": "INFO",
+      "classification": "hardening_note (documented tradeoff)",
+      "title": "SessionClipboard is not restored when the app exits mid-session",
+      "evidence": "typer_actor.stop (:110-113) skips clipboard.close()/restore when is_exiting (M2: zero clipboard ops during teardown). The pre-session clipboard is therefore not restored on quit; the retained-backlog copy is also skipped.",
+      "impact_bounded_by": "deliberate M2 contract; normal close() uses the equality guard so a newer user copy is never clobbered; loss is the pre-session clipboard value only.",
+      "blocks_release": false
+    }
+  ],
+  "hardening_notes_index": [
+    "HN-DICT-03 (F-1) cooldown checker comment-stripping fix — REQUIRED before next dependency change",
+    "HN-DICT-04 (F-2) U2 cleanup-stage Gemini consent gap — product decision",
+    "HN-DICT-05 (F-3) model_store reverify-result discard (1-line fix)",
+    "HN-DICT-06 (F-4) LLKHF_INJECTED filter completeness + docstring",
+    "HN-DICT-07 (F-5) SendInput focus micro-race (accepted, documented)",
+    "HN-DICT-08 (F-6) exit-path clipboard restore skip (accepted M2 tradeoff)",
+    "HN-DICT-09 workflow third-party actions pinned by mutable tags (gitleaks/gitleaks-action@v3.0.0, aquasecurity/trivy-action@v0.36.0, anchore/sbom-action@v0.24.3, softprops/action-gh-release@v2) — prefer full commit-SHA pins (I2)",
+    "HN-DICT-10 cooldown checker uses urls[0] upload_time (arbitrary file order) — use min(upload_time) for a conservative age",
+    "HN-DICT-11 model_store redirect handling relies on the final digest (no per-hop scheme/host allowlist) — integrity holds; harden with a redirect guard if desired",
+    "HN-DICT-12 whisper_http._read_body mirrors llm_api's read loop (documented R-phase deferral)",
+    "HN-DICT-13 TyperActor retained backlog is text-only and session-duration-bounded (unbounded queue by design; clear on exit) — acceptable"
+  ],
+  "control_statuses": [
+    {"id": "SEC-DICT-01", "control": "D9 per-vendor api_keys_protected map (K1-K8; DPAPI per entry; no plaintext downgrade)", "status": "Verified"},
+    {"id": "SEC-DICT-02", "control": "D9 WS/HTTP URL + auth redaction (ws_url_for_log / _safe_url_for_log; key in header never URL)", "status": "Verified"},
+    {"id": "SEC-DICT-03", "control": "G3/I2 model manifest integrity (real digests, https-only mirrors, no userinfo, traversal-safe, verify-before-install, in-binary pins)", "status": "Verified"},
+    {"id": "SEC-DICT-04", "control": "G3/I2 dependency cooldown + CI supply chain (Gitleaks/Trivy/SBOM/cooldown checker)", "status": "Failed (checker logic F-1; current pins compliant)", "residual": "HN-DICT-03/09/10"},
+    {"id": "SEC-DICT-05", "control": "U2 Gemini consent fail-closed before connection + red disclosure + paid-key attestation", "status": "Verified", "residual": "HN-DICT-04 (cleanup-stage scope gap)"},
+    {"id": "SEC-DICT-06", "control": "D3/D4 injection guard (focus before every emission, abort/is_exiting suppression, clipboard lifecycle)", "status": "Verified", "residual": "HN-DICT-06/07/08"},
+    {"id": "SEC-DICT-07", "control": "D3 span invalidation (LL hook LLKHF_INJECTED filter, TTL, focus proof)", "status": "Verified", "residual": "HN-DICT-06"},
+    {"id": "SEC-DICT-08", "control": "D6 quota admission/reserve atomicity + no silent failover (user-choice dialog)", "status": "Verified"},
+    {"id": "SEC-DICT-09", "control": "D11 no-transcript-logging (all new modules; runtime + static scrape)", "status": "Verified"},
+    {"id": "SEC-DICT-10", "control": "D5/D10 bounded queues, in-memory audio, temp cleanup, M2 abort", "status": "Verified"},
+    {"id": "SEC-DICT-11", "control": "Gate-1 clean/hexagonal (pure leaves, acyclicity, module caps with recorded waivers HN-DICT-01/02 + R-8)", "status": "Verified"}
+  ],
+  "verification_summary": {
+    "auditor_independent_checks": [
+      "full logger/print call-site inventory across 22 new modules (139 sites) — zero transcript/segment/key bytes (D11)",
+      "secret-pattern sweep (AIza/sk-/ghp_/Bearer/dpapi|base64 blobs) over all prod modules + manifest + artifacts — NONE",
+      "AST purity of 8 pure leaves — stdlib-only (dictation_config/llm_errors zero imports)",
+      "import-graph DFS across 41 root modules — zero cycles",
+      "manifest model.bin sha256 == live HF LFS oid (Systran/faster-whisper-base@ebe41f70); sizes match all 4 files",
+      "websocket-client==1.9.2 PyPI upload 2026-08-31 (78d old) — cooldown satisfied",
+      "cooldown checker regex reproduced against requirements-ml.txt — 0 of 6 annotated pins match (F-1 proof)",
+      "consent enforcement-point trace: preflight BEFORE engine.start; tests assert ZERO connects",
+      "K1-K8 trace: save_config swallows DPAPI RuntimeError to False (fail loud, never plaintext); K8 rewrite idempotent; K4 dual-write mirrors current slot only"
+    ],
+    "qa_evidence_reviewed": "20261116T230125Z report.json + spot-checks of test_model_store (tamper/resume/traversal/placeholder), test_main_processing (runtime log-scrape with Arabic+key sentinels incl. error path), test_typer_actor (focus/abort/is_exiting gates), test_live_cloud_engine (U2 zero-connect), test_focus_guard (hook filter)"
+  },
+  "verdict": "PASS_WITH_RESIDUAL_RISKS",
+  "verdict_rationale": "Zero exploitable vulnerabilities across the audited delta: D9/D11/G3/U2/D3/D4/D6 controls hold at every enforcement point read. One MEDIUM confirmed CONTROL DEFECT (F-1: the CI cooldown checker silently skips inline-commented pins) is not exploitable in the current dependency set (all pins independently verified >= 7 days) but must be fixed before the next dependency change. Remaining items are low-severity hardening notes and accepted documented residuals. Release may proceed; F-1 fix is a mandatory follow-up.",
+  "residual_risks": [
+    "F-1/HN-DICT-03 cooldown-gate durability (fix before next dependency change)",
+    "F-2/HN-DICT-04 Gemini cleanup-stage consent scope gap (product decision)",
+    "SEC-D2-01 carried NEEDS_VALIDATION: Linux base64: at-rest key depends on home-dir privacy (no keyring in this release)",
+    "SEC-LOG-01 carried NEEDS_VALIDATION: %LOCALAPPDATA%\\WhisperLive ACL check on a target machine",
+    "HN-DICT-06/07 injection/span residuals (same-user class, mode-gated)"
+  ],
+  "artifacts": {
+    "report_dir": "artifacts/secops-reports/T-2026-11-16-dictation-modes/20261116T230956Z/",
+    "static_check_helper": "audit_static_checks.py (read-only; reproduces purity/cycle/secret sweeps)"
+  }
+}
