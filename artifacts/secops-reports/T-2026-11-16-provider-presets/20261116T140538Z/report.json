@@ -1,0 +1,170 @@
+{
+  "schema_version": "1.0",
+  "report_type": "secops-final-diff-audit-gate",
+  "task_id": "T-2026-11-16-provider-presets",
+  "lineage_id": "L-provider-presets-1",
+  "run_id": "20261116T140538Z",
+  "attempt": 1,
+  "risk_tier": "Tier 2",
+  "mode": "B (Feature: provider presets + Custom mode + Xiaomi MiMo two-stage models)",
+  "auditor": "secops-auditor (A8)",
+  "date": "2026-11-16",
+  "baseline_commit": "1e23d2d3ccac357bf6a296a206e5d236239dd0e2",
+  "head_moved": false,
+  "audit_scope": {
+    "production_diff": ["README.md", "config_manager.py", "llm_api.py", "main.py", "settings_view.py"],
+    "new_production_files": ["providers.py", "llm_payloads.py"],
+    "test_diff": ["test_config_manager.py", "test_llm_api.py", "test_main_processing.py", "test_updater.py", "test_views_startup_split.py"],
+    "new_test_files": ["test_providers.py", "test_llm_payloads.py", "test_settings_view.py"],
+    "qa_evidence": "artifacts/qa-reports/T-2026-11-16-provider-presets/20261116T135602Z/report.json (250 tests OK, 241 passed / 9 env-gated skips / 0 failed, 3x stable, Linux docker reproof OK)",
+    "policies": [".opencode/rules/02-cross-platform-security-policy-policy.md (A/B/C/D/I/J)", ".opencode/rules/01-clean-code-policy.md"],
+    "skills_loaded": ["deep-security-hunting", "clean-hexagonal-enforcer"]
+  },
+  "verification_methods": [
+    "Full diff read (git diff HEAD) + complete read of providers.py, llm_payloads.py, llm_api.py",
+    "Independent AST purity check (auditor-executed): providers.py imports only dataclasses+typing; llm_payloads.py imports nothing; zero open/print/eval/exec/__import__ calls",
+    "Independent secret-pattern sweep (sk-/AIza/ghp_/tp-<10+>/Bearer <16+>/dpapi:/base64:) over diff, new files, and artifacts: ZERO hits",
+    "Full logger/print call-site inventory over all 6 changed prod modules: static strings, type names, counts, basenames, sanitized URL only",
+    "Independent registry URL hygiene check (auditor-executed): all 12 preset/variant URLs https (localhost http for Ollama), no userinfo/query/fragment/trailing slash",
+    "Adversarial crafted-config attack simulation (auditor-executed): preset provider + attacker provider_base_url is overwritten by the registry URL at load (M7); custom provider passes the URL through (inherent trust decision)",
+    "Never-raise fuzz of normalize_config / validate_provider_selection / initial_state / save_payload on None/int/str/list/dict/garbage-typed dicts: zero raises",
+    "Authority fail-safe probes: resolve_provider_id(42)->'custom', dialect_for_preset('junk')->'openai', key_hint never echoes key content",
+    "Test-integrity check: zero deletion lines in the 3 extended test files (pure additive); QA report cross-read",
+    "Line-count audit: providers 349, llm_payloads 157, llm_api 349, settings_view 335, main 337, config_manager 269 (all <=350)"
+  ],
+  "controls": [
+    {
+      "id": "CTRL-SECRETS",
+      "topic": "Secrets & key handling (A9/A11/D2)",
+      "status": "Verified",
+      "evidence": "DPAPI path (config_manager._protect_api_key/_unprotect_api_key/api_key_protected) untouched by the diff; normalize_config M12 never touches api_key (fuzz-verified: key preserved byte-exact through normalization). New config keys {provider, provider_variant, transcription_model} are non-secret. Zero logging in providers.py/llm_payloads.py; settings_view logs one static exception string; llm_api still routes its single URL log through _safe_url_for_log (llm_api.py:166). tp-xxxxx is a static placeholder shown only when the key is EMPTY (providers.key_hint returns '' for filled keys — verified); no key material in status labels. Secret sweep over diff/tests/artifacts: zero hits."
+    },
+    {
+      "id": "CTRL-URL-SSRF",
+      "topic": "URL validation & SSRF posture (A4/B8/H4)",
+      "status": "Verified",
+      "evidence": "llm_api._endpoint (llm_api.py:103-119, unchanged by the diff) rejects non-http(s) schemes, userinfo credentials, query and fragment before any network I/O. All 12 registry URLs are compile-time constants with clean hygiene (auditor-verified). Registry-wins on every path: normalize_config M7 (load), providers.save_payload (save), settings_view.start_fetch (fetch) — a crafted config.json with a known preset provider CANNOT redirect the API key to an attacker URL (attack sim: evil URL overwritten by https://token-plan-ams.xiaomimimo.com/v1). Custom-mode URL passthrough is a documented user trust decision (README)."
+    },
+    {
+      "id": "CTRL-WIRE-PAYLOAD",
+      "topic": "Wire payloads (A3/A5) — MiMo dialect boundary, prompt/transcript privacy, size bounds",
+      "status": "Verified",
+      "evidence": "MiMo ASR payload (llm_payloads._mimo_transcription_payload): exactly one input_audio part (Data-URL data, NO format key), no text prompt, top-level asr_options.language mapped chinese->zh / english->en / everything-else->auto (fail-safe). No transcript or prompt content in any stage-1 payload; the stage-2 prompt embeds the raw transcript but is never logged (zero logging in payloads; llm_api logs only description + redacted URL; error boundaries log static strings + traceback — retained HN-1). Per-dialect size caps resolve BEFORE file read/base64/network (llm_api.transcribe_audio:275-286): 20 MiB generic / 7 MiB MiMo (base64 <= 9,786,714 chars < 10,000,000 vendor bound). Unknown dialect falls back to generic shape AND generic cap consistently (gate and shape can never disagree)."
+    },
+    {
+      "id": "CTRL-INPUT-VALIDATION",
+      "topic": "Input validation at the new boundary (providers.normalize_config et al.)",
+      "status": "Verified",
+      "evidence": "normalize_config never raises (fuzz: None/int/str/list/dict/garbage-typed values) and never propagates attacker-controlled values into authority decisions: unknown provider -> 'custom', unknown variant -> preset default, unknown dialect -> 'openai', M7 registry URL wins for presets, M12 api_key byte-preserved. No eval/exec/pickle/network in providers.py & llm_payloads.py (independent AST check). Empty/whitespace effective stage-1 model fails closed with LLMConfigError before any network call (QA OBS-1 pinned as contract test)."
+    },
+    {
+      "id": "CTRL-UI",
+      "topic": "Settings dialog (A5/C)",
+      "status": "Verified",
+      "evidence": "API key entry masked by default (show='*'), Show/Hide toggle preserved. Provider Base URL is read-only for all 8 presets (readonly Entry) and editable only for Custom — accidental misconfiguration prevented; save_payload re-resolves the registry URL regardless of widget contents (defense-in-depth against widget tampering, QA-pinned). Status label shows only static hints/messages; key_status_hint is pure and returns '' whenever a key is present. Provider/variant comboboxes are state='readonly' (ids resolved via registry, never guessed)."
+    },
+    {
+      "id": "CTRL-SUPPLY-CHAIN",
+      "topic": "Supply chain (I2)",
+      "status": "Verified",
+      "evidence": "git diff HEAD -- requirements.txt requirements-build.txt = EMPTY (auditor-executed). New modules are stdlib-only (llm_payloads: zero imports; providers: dataclasses+typing). 7-day cooldown N/A (zero new packages)."
+    },
+    {
+      "id": "CTRL-CLEAN-HEX",
+      "topic": "Clean Code / Hexagonal gates (Gate 1)",
+      "status": "Verified",
+      "evidence": "Dependency direction acyclic and inward: providers.py & llm_payloads.py are pure leaves (no app imports, AST-verified); config_manager->providers; llm_api->llm_payloads+version; settings_view->providers+config_manager+llm_api; main->providers. No module imports main (QA acyclicity guard extended). Sizes all <=350 (providers 349, llm_payloads 157, llm_api 349, settings_view 335, main 337, config_manager 269). No typing.Any; untrusted params typed object/Mapping[str, object] with isinstance guards. Error taxonomy (LLMError/LLMConfigError/LLMAuthError/LLMNetworkError) preserved; no swallowed errors (broad catches re-raise typed; TclError catches are documented teardown). Dialect-tag duplication (providers/llm_payloads) is deliberate purity tradeoff, QA contract-pinned (R-11)."
+    },
+    {
+      "id": "CTRL-MATRIX",
+      "topic": "SECURITY_EVIDENCE_MATRIX.md maintenance (J2)",
+      "status": "Verified",
+      "evidence": "SEC-D2-02 refreshed with auditor-verified current line numbers (settings_view.save_settings = settings_view.py:292-308; the '300-335' range suggested in the task brief was NOT confirmed — actual verified range is 292-308). New rows SEC-PROV-01..05 added (registry integrity, MiMo dialect boundary, per-dialect size caps, normalize_config fail-safety, custom-URL residual). Stale line refs in SEC-A11-01/SEC-H4-01/SEC-A5-05/SEC-CLEAN-01 refreshed."
+    }
+  ],
+  "findings": [
+    {
+      "id": "SEC-F-01",
+      "candidate": "Crafted config.json redirects a preset's API key to an attacker URL (key exfiltration)",
+      "severity_if_real": "High",
+      "classification": "rejected",
+      "disproof": "Registry-wins is enforced at every read/write path: providers.normalize_config M7 overwrites provider_base_url with the registry endpoint for any known preset at config LOAD (auditor attack sim: {'provider':'xiaomi-mimo','provider_base_url':'https://evil.example/v1'} -> https://token-plan-ams.xiaomimimo.com/v1); providers.save_payload re-resolves at save; settings_view.start_fetch queries the registry URL, never widget contents. The stored URL for presets is dead data."
+    },
+    {
+      "id": "SEC-F-02",
+      "candidate": "Malformed provider/variant values crash or bypass the recording guard / dialect selection",
+      "severity_if_real": "Low",
+      "classification": "rejected (security) + hardening_note HN-11 (robustness)",
+      "disproof": "All resolvers are isinstance-guarded and fail safe (resolve_provider_id(42)->'custom'; dialect_for_preset('junk')->'openai'; save_payload accepts labels/ids/None without raising — fuzz-verified). Non-str config values (e.g. JSON null model) pass through M4 byte-identical and can raise AttributeError on .strip() in main.start_recording (main.py:229-232) — PRE-EXISTING pattern (the baseline guard had identical .strip() semantics), same-user config tampering only, fail-closed (no request issued, no key material in the traceback: 'NoneType object has no attribute strip'). Recorded as HN-11, non-blocking."
+    },
+    {
+      "id": "SEC-F-03",
+      "candidate": "MiMo payload builder can be tricked into logging transcript/prompt content",
+      "severity_if_real": "Medium",
+      "classification": "rejected",
+      "disproof": "llm_payloads.py contains zero logging/print calls and imports nothing (AST-verified). llm_api logs exactly one line per request: description + _safe_url_for_log URL (llm_api.py:166). Stage-1 payloads contain no transcript in either dialect; the stage-2 prompt (with raw transcript) never reaches a log sink. Arabic prompts are module literals, never logged. Full logger call-site inventory across all 6 changed modules: zero transcript/prompt/key interpolation."
+    },
+    {
+      "id": "SEC-F-04",
+      "candidate": "HN-9 retained: _endpoint invalid-scheme error echoes base_url!r before the credential check",
+      "severity_if_real": "Low",
+      "classification": "hardening_note (retained, unfixed in this diff)",
+      "detail": "llm_api.py:108-111 raises with f'Provider Base URL is invalid: {base_url!r}' BEFORE the userinfo/query/fragment rejection at :114-118, so a typo'd-scheme URL containing user:pass@ echoes the credential into the UI-facing error message. Impact bounded: LLMError messages reach only the user's own UI (display-only, never logged). Suggested fix unchanged: run the credential rejection first or redact userinfo in the message."
+    },
+    {
+      "id": "SEC-F-05",
+      "candidate": "Module-size headroom: providers.py and llm_api.py sit at 349/350 lines",
+      "severity_if_real": "Info",
+      "classification": "hardening_note",
+      "detail": "Within the gate (<=350) but with zero headroom. Both modules are cohesive (registry / transport); further growth should extract, not extend."
+    },
+    {
+      "id": "SEC-F-06",
+      "candidate": "Custom-URL mode sends the configured API key to whatever URL the config names",
+      "severity_if_real": "Medium (inherent design)",
+      "classification": "needs_validation -> accepted residual risk RES-1",
+      "detail": "By design: Custom (OpenAI-compatible URL) makes the user the URL authority (README documents 'any URL you enter'). A same-user attacker who can write config.json could point Custom at an attacker host and harvest the key — but that attacker can already replace the binary; cross-user tampering is blocked by per-user config location (%LOCALAPPDATA%/WhisperLive, exact ACL fact already carried as needs_validation in SEC-D2-01 for Linux). Mitigations present: the 8 presets are immune (registry-wins, SEC-F-01); _endpoint still forbids credential-bearing URLs and logs are redacted. Accepted and documented."
+    },
+    {
+      "id": "SEC-F-07",
+      "candidate": "Token-plan hint or key-status hint could echo key material into UI/logs",
+      "severity_if_real": "Low",
+      "classification": "rejected",
+      "disproof": "providers.key_hint returns '' whenever any key text is present (fuzz-verified with 'sk-secret'); the 'tp-xxxxx' string is a static format placeholder, never derived from or compared against real key content; key_status_hint is pure, display-only, and never reaches a log sink."
+    },
+    {
+      "id": "SEC-F-08",
+      "candidate": "DRY: key-required hint copy duplicated in providers._KEY_REQUIRED_HINT and settings_view.FALLBACK_KEY_HINT",
+      "severity_if_real": "Info",
+      "classification": "hardening_note",
+      "detail": "Documented deliberate copy duplication (providers docstring notes wording mirrors settings_view; purity forbids the import). QA pins behavior. Acceptable limited duplication per policy section 9; consolidate into providers if the copy ever changes."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "RES-1",
+      "ref": "SEC-F-06",
+      "description": "Custom-mode URL is a user trust decision: a tampered config.json can point Custom at an attacker host and the API key follows (inherent to user-configured endpoints).",
+      "rationale": "Same-user threat model (config tamper = binary replace equivalence); presets immune via registry-wins; documented in README; cross-user protection depends on OS profile ACLs (Linux fact carried as needs_validation under SEC-D2-01).",
+      "accepted_by": "product design (documented) + audit acceptance"
+    },
+    {
+      "id": "RES-2",
+      "ref": "HN-1 / HN-9 / HN-11",
+      "description": "Retained hardening notes: generic logger.exception tracebacks may embed exotic library error strings (HN-1); _endpoint scheme-error may echo a credential-bearing URL into the UI-only error message (HN-9); non-str config values can raise fail-closed AttributeError in the recording guard (HN-11).",
+      "rationale": "No trust boundary crossed; no log sink receives secrets; fail-closed; all UI-display-only or same-user."
+    },
+    {
+      "id": "RES-3",
+      "ref": "QA OBS-1",
+      "description": "Whitespace-only transcription_model does not fall back to model (Python 'or' truthiness) and fails closed with LLMConfigError before any network call; unreachable through the app (save/normalize/snapshot all strip).",
+      "rationale": "Pinned as fail-closed contract test; plan-literal behavior; no request issued."
+    }
+  ],
+  "needs_validation_carried": [
+    "SEC-D2-01: Linux at-rest key protection depends on home-dir privacy (base64 fallback is upstream-unchanged).",
+    "SEC-LOG-01: log-directory ACLs on target machines (icacls)."
+  ],
+  "verdict": "PASS_WITH_RESIDUAL_RISKS",
+  "verdict_rationale": "Zero confirmed security findings across the full uncommitted feature diff. All seven scoped control areas Verified against the actual enforcement points (independently executed AST/purity, secret-sweep, URL-hygiene, crafted-config attack-sim and never-raise fuzz evidence — not QA attestations alone). Residual risks are inherent-design (RES-1 custom-URL trust), pre-existing hardening notes (RES-2), and an unreachable fail-closed quirk (RES-3); none blocks release readiness. RELEASE-READY: YES, subject to the documented residuals."
+}

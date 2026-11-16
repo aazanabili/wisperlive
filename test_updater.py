@@ -12,7 +12,8 @@ import unittest
 
 import updater
 
-# Every production module in the merged `finish` tree (ui section c row 8).
+# Every production module in the merged `finish` tree (ui section c row 8),
+# extended by T-2026-11-16-provider-presets with the two pure modules.
 APP_MODULES = (
     "main",
     "views",
@@ -24,6 +25,8 @@ APP_MODULES = (
     "app_logging",
     "audio_recorder",
     "llm_api",
+    "providers",
+    "llm_payloads",
     "auto_typer",
     "windows_hotkey",
     "linux_hotkey",

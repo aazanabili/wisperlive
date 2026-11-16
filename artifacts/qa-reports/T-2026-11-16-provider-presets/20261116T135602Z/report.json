@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0",
+  "task_id": "T-2026-11-16-provider-presets",
+  "lineage_id": "L-provider-presets-1",
+  "run_id": "20261116T135602Z",
+  "attempt": 1,
+  "max_attempts": 3,
+  "risk_tier": "Tier 2",
+  "mode": "B (Feature Evolution - provider presets + Custom mode)",
+  "status": "PASS",
+  "status_precedence_index": 8,
+  "base_revision": "1e23d2d",
+  "revision": "1e23d2d",
+  "branch": "(detached/working tree, HEAD 1e23d2d3ccac357bf6a296a206e5d236239dd0e2)",
+  "dirty_state_fingerprint": {
+    "before": {
+      "git_status_porcelain": "worker production changes (README.md, config_manager.py, llm_api.py, main.py, settings_view.py) + untracked ARCHITECTURE_LOCK.md/DATA_TOPOLOGY.md/DESIGN.md/STACK_AND_PATTERNS_MATRIX.md/llm_payloads.py/providers.py (all pre-existing from worker-executor phases 1-3)",
+      "sha256": "a65366175fe0335f59b6224b09d804b1c2d80cb544c401c4dc97afff5325d368"
+    },
+    "after": {
+      "git_status_porcelain": "same worker delta + QA-owned test files (test_providers.py, test_llm_payloads.py, test_settings_view.py new; test_config_manager.py, test_llm_api.py, test_main_processing.py, test_updater.py, test_views_startup_split.py extended) + artifacts/qa-reports/T-2026-11-16-provider-presets/",
+      "sha256": "a65366175fe0335f59b6224b09d804b1c2d80cb544c401c4dc97afff5325d368"
+    },
+    "head_before": "1e23d2d3ccac357bf6a296a206e5d236239dd0e2",
+    "head_after": "1e23d2d3ccac357bf6a296a206e5d236239dd0e2",
+    "head_moved": false,
+    "files_changed_mid_run": false,
+    "stale": false
+  },
+  "scope": {
+    "plan": ".orchestrator/plans/feature-provider-presets.md section 2.2 test matrix",
+    "production_files_touched": 0,
+    "test_files_created": ["test_providers.py", "test_llm_payloads.py", "test_settings_view.py"],
+    "test_files_extended": ["test_config_manager.py", "test_llm_api.py", "test_main_processing.py", "test_updater.py", "test_views_startup_split.py"],
+    "other_qa_artifacts": ["artifacts/qa-reports/T-2026-11-16-provider-presets/_probe/dialog_probe.py", "artifacts/qa-reports/T-2026-11-16-provider-presets/_probe/prompt_verbatim_probe.py"]
+  },
+  "per_suite_results": [
+    {"suite": "test_providers", "state": "NEW", "tests": 38, "result": "PASS", "coverage": "9 preset ids + plan 1.4 canonical URLs (DeepSeek root alias pinned, no /v1), variant ids api|token-plan-ams|token-plan-sgp|token-plan-cn + labels, dialect literal contract pin vs llm_payloads (R-11), MiMo curated models exactly (mimo-v2.5-asr / mimo-v2.6-flash / mimo-v2.6-pro), TTS trio absent from every model field, api_key_required False only for ollama-local, mode coherence, URL hygiene static H4 mirror, normalize_config M1-M12 matrix (M1 byte-identical incl. no-new-keys file, M2/M3, M5/M6, M7 registry-wins, M8/M9 defaults, M10 fail-closed, M11 clears strays, M12 api_key/api_key_protected/unknown-key round-trip) + idempotence + N1 garbage never-raises, resolution helpers, validate_provider_selection advisory matrix, save_payload(initial_state(x)) symmetry, R-13 exact public surface + superseded-names-absent, AST purity (providers imports only dataclasses/typing; llm_payloads imports nothing; no open/print/exec/eval), no-Tk-root-on-import subprocess check"},
+    {"suite": "test_llm_payloads", "state": "NEW", "tests": 14, "result": "PASS", "coverage": "generic payload byte-identical (text prompt part + input_audio {data, format:'wav'}, Arabic prompt phrase pinned), MiMo exact documented shape (single input_audio part, NO format key, Data-URL prefix data:audio/wav;base64,, no text part, top-level asr_options.language), _mimo_asr_language table (Chinese/English case-insensitive -> zh/en; Original language/empty/French/Arabic/non-str -> auto), _audio_size_limit per dialect (20 MB / 7 MB) + unknown-dialect fallback, MiMo 7 MiB bound keeps base64 < 10,000,000 chars, dispatcher fallback consistency (size gate and payload shape can never disagree)"},
+    {"suite": "test_settings_view", "state": "NEW", "tests": 22, "result": "PASS", "note": "display-gated: runs on Windows leg, class-level skip on headless leg (documented reason)", "coverage": "9 approved labels in provider combobox (readonly), legacy hydration = Custom + byte-identical URL + editable entry, MiMo hydration (stored variant/models verbatim, readonly URL), provider change reprefill/reset (variant -> default api, models -> registry defaults, URL -> registry, api_key never touched), readonly preset URL vs editable Custom, split rows visible ONLY for MiMo (all 8 others toggle correctly), token-plan variant -> cluster URL (all 4) + persisted on save, save mapping R3 IFF (split writes transcription_model + post row -> model; single/Custom ALWAYS clear transcription_model even with adversarial stale widget value; preset save re-resolves URL ignoring tampered display), save_config called once with exact config + verbatim status copy + failure status, Escape AND Cancel discard (no save, config untouched), exact copy pins (MIMO_MODEL_HINT, BASE_URL_HINT), key_status_hint purity"},
+    {"suite": "test_config_manager", "state": "EXTENDED", "tests": 18, "tests_before": 13, "tests_added": 5, "result": "PASS", "coverage": "+3 new-key defaults, +M1-style legacy file byte-identical load (URL/model/other keys + provider==custom), +load-time M5/M7 normalization (registry URL wins), +M8/M9 fill + M11 clear on load, +DPAPI/base64 protected key survives provider normalization (regression: existing DPAPI tests untouched and green)"},
+    {"suite": "test_llm_api", "state": "EXTENDED", "tests": 51, "tests_before": 42, "tests_added": 9, "result": "PASS", "coverage": "+per-dialect size gate (generic 'over 20 MB' pinned verbatim, mimo-asr 'over 7 MB', urlopen.assert_not_called() on rejection, generic accepts 7 MiB+1, unknown dialect -> 20 MB gate), +process_audio stage-1 transcription_model or model + stage-2 model (mocked 2-call body assertions), +whitespace transcription_model fail-closed LLMConfigError before network (contract pin, see observations), +MiMo end-to-end wire shape through mocked urlopen (exact URL, Bearer auth, exact JSON body incl. asr_options.language zh, NO format key), +generic dialect ignores target_language (no asr_options, prompt unchanged)"},
+    {"suite": "test_main_processing", "state": "EXTENDED", "tests": 22, "tests_before": 10, "tests_added": 12, "result": "PASS", "coverage": "+SnapshotThreadingTests (MiMo snapshot passes kwargs {dialect: mimo-asr, transcription_model} with exactly 5 positional args via Thread args=, default snapshot passes {dialect: openai, transcription_model: ''}, unknown provider -> openai dialect), +ConditionalForwardingTests (defaults forward ZERO kwargs so assert_called_once_with(*SNAPSHOT) stays byte-exact; mimo forwards both; default dialect omitted; empty stage-1 omitted), +StartRecordingGuardTests guard matrix (empty transcription_model falls back to model, split models pass, both-empty blocks, stage-2-empty blocks even with stage-1 set, missing URL blocks - all with verbatim status copy and error beep 400,300)"},
+    {"suite": "test_updater", "state": "EXTENDED", "tests": 2, "result": "PASS", "coverage": "APP_MODULES += providers, llm_payloads (no-print AST guard now covers both new modules)"},
+    {"suite": "test_views_startup_split", "state": "EXTENDED", "tests": 7, "result": "PASS", "coverage": "no-main-import acyclicity module tuple += providers, llm_payloads"}
+  ],
+  "totals": {
+    "baseline_tests": 150,
+    "baseline_result": "OK (skipped=9)",
+    "final_tests": 250,
+    "final_result": "OK (skipped=9)",
+    "new_tests_added": 100,
+    "passed": 241,
+    "skipped": 9,
+    "failed": 0,
+    "errors": 0,
+    "baseline_all_green": true
+  },
+  "skip_reasons": [
+    {"count": 3, "reason": "set WHISPERLIVE_X11_TESTS=1 with an X11 display to run the X11 smoke tests (test_linux_hotkey.X11SmokeTests)", "env_gated": true, "pre_existing": true},
+    {"count": 1, "reason": "same-process lock conflicts across Windows handles are not guaranteed; covered by the real subprocess test (test_single_instance)", "env_gated": true, "pre_existing": true},
+    {"count": 5, "reason": "XDG autostart startup registration (test_startup_registration.LinuxStartupRegistrationTests)", "env_gated": true, "pre_existing": true}
+  ],
+  "attempts": [
+    {"n": 1, "target": "venv python -m unittest discover -v (full suite)", "result": "PASS", "detail": "Ran 250 tests ... OK (skipped=9); repeated 3x consecutively - identical result, no flakiness"}
+  ],
+  "checks": [
+    {"id": "baseline_before", "cmd": "venv\\Scripts\\python.exe -m unittest discover -v", "platform": "win32", "result": "PASS", "detail": "Ran 150 tests ... OK (skipped=9) - captured before QA edits"},
+    {"id": "py_compile", "cmd": "venv\\Scripts\\python.exe -m py_compile <all 8 test files>", "platform": "win32", "result": "PASS", "detail": "exit 0"},
+    {"id": "full_suite_windows", "cmd": "venv\\Scripts\\python.exe -m unittest discover -v", "platform": "win32", "result": "PASS", "detail": "Ran 250 tests in 4.107s ... OK (skipped=9); run 3x - stable (no FLAKY)"},
+    {"id": "per_suite_windows", "cmd": "venv\\Scripts\\python.exe -m unittest <each of the 8 touched suites>", "platform": "win32", "result": "PASS", "detail": "providers 38, llm_payloads 14, settings_view 22, config_manager 18, llm_api 51, main_processing 22, updater 2, views_startup_split 7 - all OK"},
+    {"id": "linux_docker_reproof", "cmd": "docker run --rm -v H:\\projects\\wisperlive:/src -w /src python:3.11 bash -c 'pip install -q -r requirements.txt; python -m unittest discover'", "platform": "linux/x86_64 (docker python:3.11)", "result": "PASS", "detail": "Ran 228 tests ... OK (skipped=14); 250 discovered, 22 test_settings_view tests skip at setUpClass (headless: 'no display available for Tk: no display name and no $DISPLAY environment variable'), remaining skips all pre-existing env-gated (3 X11 + 5 win32-registry). First docker attempt without requirements.txt showed 7 ModuleNotFoundError (pyperclip) - environment setup issue, not a test defect; green after pip install"},
+    {"id": "prompt_verbatim", "cmd": "git show HEAD:llm_api.py vs llm_payloads.py regex comparison", "platform": "win32", "result": "PASS", "detail": "_TRANSCRIBE_PROMPT and _POST_PROCESS_PROMPT_TEMPLATE byte-identical (verbatim move confirmed)"},
+    {"id": "production_line_budgets", "cmd": "(Get-Content <file>).Count", "platform": "win32", "result": "PASS", "detail": "providers 349, llm_payloads 157, llm_api 349, settings_view 335, main 337, config_manager 269 - all <= 350"},
+    {"id": "commit_scope", "cmd": "git status --porcelain (before vs after)", "result": "PASS", "detail": "QA delta = 3 new test files + 5 extended test files + artifacts/qa-reports/; zero production files touched by qa-test-assurance; HEAD unmoved (no git commit/reset/clean performed)"}
+  ],
+  "retries_used": 0,
+  "flaky_detected": false,
+  "defects_found": [],
+  "observations_non_blocking": [
+    {"id": "OBS-1", "severity": "info", "location": "llm_api.process_audio / plan 3.1 step 2.2", "detail": "Whitespace-only transcription_model does NOT fall back to model (Python `or` sees truthy string; _require_model strips -> LLMConfigError before any network call). Matches the plan's literal `transcription_model or model`; diverges from A3 proposal L-3's '(or whitespace)' phrasing. Unreachable through the app: save_payload strips (_text), normalize_config M8/M9 fill or clear, main snapshots .strip(). Pinned as fail-closed contract test test_whitespace_transcription_model...; not classified as a production defect (plan text is authoritative, behavior is safe, no request is issued)."},
+    {"id": "OBS-2", "severity": "info", "location": "settings_view.show_settings after_idle(provider_combo.focus_set)", "detail": "If the dialog is destroyed before the scheduled idle fires, Tk prints a background 'invalid command' line to stderr. Practically unreachable in production (idle fires on the next event-loop pass, before any user input can close the dialog); no functional impact - the dialog closes correctly. QA tests pump root.update() after show_settings to keep output clean. Cosmetic only; left unfixed per read-only-on-production rule."}
+  ],
+  "platform_honesty": {
+    "native_windows_verified": true,
+    "linux_verified_via_docker": true,
+    "docker_engine": "29.9.3 linux/x86_64 (python:3.11 + requirements.txt, mirrors ubuntu CI leg)",
+    "settings_dialog_windows_leg": "RUN (22/22 real Tk interaction tests executed)",
+    "settings_dialog_linux_leg": "ENV-GATED SKIP (headless - documented class-level skip; CI ubuntu leg will behave identically)",
+    "macos_apple_native": "NOT REQUIRED for this Tier 2 pure-Python feature (no native platform code; suite is cross-platform unit/contract tests)"
+  },
+  "verdict": "Plan section 2.2 test matrix fully implemented. 150/150 pre-existing tests remain green (9 env-gated skips unchanged, zero new skips on the Windows leg). 100 new tests added (250 total). No production defects found; 2 non-blocking observations recorded. QA write scope respected: only test_*.py and artifacts/qa-reports/** modified; HEAD unmoved."
+}

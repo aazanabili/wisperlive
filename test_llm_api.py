@@ -423,6 +423,178 @@ class ProcessAudioTests(unittest.TestCase):
         self.assertNotIsInstance(ctx.exception, llm_api.LLMNetworkError)
 
 
+class DialectContractTests(unittest.TestCase):
+    """T-2026-11-16-provider-presets: per-dialect size gate, stage-model
+    fallback, MiMo end-to-end wire shape, and target_language scoping."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.audio_path = os.path.join(self.temp.name, "clip.wav")
+        with open(self.audio_path, "wb") as handle:
+            handle.write(b"RIFFfakeaudio")
+
+    def write_audio(self, name, size):
+        path = os.path.join(self.temp.name, name)
+        with open(path, "wb") as handle:
+            handle.write(b"\x00" * size)
+        return path
+
+    # --- per-dialect H1 size gate ------------------------------------------
+    def test_generic_dialect_rejects_over_20mb_before_network(self):
+        import llm_payloads
+        big = self.write_audio("huge-generic.wav",
+                               llm_payloads._audio_size_limit("openai")[0] + 1)
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(llm_api.LLMError) as ctx:
+                llm_api.transcribe_audio(big, "sk-test", "https://example.com/v1",
+                                         "gpt-audio", dialect="openai")
+        # message pinned verbatim (pre-existing contract)
+        self.assertEqual(
+            str(ctx.exception),
+            "The recording is too large to process (over 20 MB). "
+            "Please record a shorter clip.")
+        urlopen.assert_not_called()
+
+    def test_mimo_dialect_rejects_over_7mb_before_network(self):
+        import llm_payloads
+        self.assertEqual(llm_payloads._audio_size_limit("mimo-asr"),
+                         (7 * 1024 * 1024, "7 MB"))
+        big = self.write_audio("huge-mimo.wav",
+                               llm_payloads.MIMO_MAX_AUDIO_BYTES + 1)
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(llm_api.LLMError) as ctx:
+                llm_api.transcribe_audio(big, "tp-test",
+                                         "https://api.xiaomimimo.com/v1",
+                                         "mimo-v2.5-asr", dialect="mimo-asr")
+        self.assertEqual(
+            str(ctx.exception),
+            "The recording is too large to process (over 7 MB). "
+            "Please record a shorter clip.")
+        urlopen.assert_not_called()
+
+    def test_generic_dialect_accepts_7mb_plus_one(self):
+        # The 7 MB cap is MiMo-specific: the generic dialect must NOT reject
+        # a recording that only exceeds the MiMo bound.
+        import llm_payloads
+        edge = self.write_audio("edge-7mb.wav",
+                                llm_payloads.MIMO_MAX_AUDIO_BYTES + 1)
+        response = FakeResponse({"choices": [{"message": {"content": "ok"}}]})
+        with mock.patch("urllib.request.urlopen",
+                        return_value=response) as urlopen:
+            text = llm_api.transcribe_audio(edge, "sk-test",
+                                            "https://example.com/v1", "gpt-audio",
+                                            dialect="openai")
+        self.assertEqual(text, "ok")
+        urlopen.assert_called_once()
+
+    def test_unknown_dialect_uses_generic_20mb_gate(self):
+        import llm_payloads
+        big = self.write_audio("huge-unknown.wav",
+                               llm_payloads._audio_size_limit("openai")[0] + 1)
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaisesRegex(llm_api.LLMError, r"over 20 MB"):
+                llm_api.transcribe_audio(big, "sk-test", "https://example.com/v1",
+                                         "gpt-audio", dialect="future-dialect")
+        urlopen.assert_not_called()
+
+    # --- stage-model fallback (process_audio) -------------------------------
+    def test_transcription_model_overrides_stage_one_and_stage_two_keeps_model(self):
+        with mock.patch("urllib.request.urlopen", side_effect=[
+            FakeResponse({"choices": [{"message": {"content": "raw"}}]}),
+            FakeResponse({"choices": [{"message": {"content": "final"}}]}),
+        ]) as urlopen:
+            text = llm_api.process_audio(
+                self.audio_path, "French", "sk-test", "https://example.com/v1",
+                model="mimo-v2.6-flash", dialect="mimo-asr",
+                transcription_model="mimo-v2.5-asr")
+        self.assertEqual(text, "final")
+        stage_one = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        stage_two = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        self.assertEqual(stage_one["model"], "mimo-v2.5-asr")
+        self.assertEqual(stage_two["model"], "mimo-v2.6-flash")
+
+    def test_empty_transcription_model_falls_back_to_model(self):
+        with mock.patch("urllib.request.urlopen", side_effect=[
+            FakeResponse({"choices": [{"message": {"content": "raw"}}]}),
+            FakeResponse({"choices": [{"message": {"content": "final"}}]}),
+        ]) as urlopen:
+            llm_api.process_audio(
+                self.audio_path, "French", "sk-test", "https://example.com/v1",
+                model="gpt-audio", dialect="openai", transcription_model="")
+        stage_one = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        stage_two = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        self.assertEqual(stage_one["model"], "gpt-audio")
+        self.assertEqual(stage_two["model"], "gpt-audio")
+
+    def test_blank_transcription_model_surfaces_config_error_before_network(self):
+        # CONTRACT PIN: stage-1 model = `transcription_model or model` (plan
+        # 3.1 step 2.2, literal `or`). Whitespace is truthy in Python, so a
+        # whitespace-only value does NOT fall back - it reaches _require_model,
+        # which strips and raises the existing user-safe config error BEFORE
+        # any network call. Unreachable through the app (save_payload strips,
+        # M8/M9 fill, main snapshots .strip()), so this pins fail-safe
+        # behaviour for direct API callers; it does not crash or leak a request.
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaisesRegex(llm_api.LLMConfigError,
+                                        "No model is selected"):
+                llm_api.process_audio(
+                    self.audio_path, "French", "sk-test",
+                    "https://example.com/v1", model="gpt-audio",
+                    dialect="openai", transcription_model="   ")
+        urlopen.assert_not_called()
+
+    # --- MiMo end-to-end wire shape -----------------------------------------
+    def test_mimo_end_to_end_request_shape_through_urlopen(self):
+        response = FakeResponse({"choices": [{"message": {"content": "\u0645\u0631\u062d\u0628\u0627"}}]})
+        with mock.patch("urllib.request.urlopen",
+                        return_value=response) as urlopen:
+            text = llm_api.transcribe_audio(
+                self.audio_path, "tp-key", "https://api.xiaomimimo.com/v1",
+                "mimo-v2.5-asr", dialect="mimo-asr", target_language="Chinese")
+        self.assertEqual(text, "\u0645\u0631\u062d\u0628\u0627")
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url,
+                         "https://api.xiaomimimo.com/v1/chat/completions")
+        headers = headers_of(request)
+        self.assertEqual(headers["authorization"], "Bearer tp-key")
+        self.assertEqual(headers["content-type"], "application/json")
+
+        body = json.loads(request.data.decode("utf-8"))
+        expected_b64 = base64.b64encode(b"RIFFfakeaudio").decode("ascii")
+        self.assertEqual(body, {
+            "model": "mimo-v2.5-asr",
+            "messages": [{"role": "user", "content": [
+                {"type": "input_audio",
+                 "input_audio": {
+                     "data": "data:audio/wav;base64," + expected_b64}},
+            ]}],
+            "asr_options": {"language": "zh"},
+        })
+        # strict docs contract: NO format key anywhere in the wire body
+        self.assertNotIn(
+            "format", body["messages"][0]["content"][0]["input_audio"])
+        self.assertNotIn("text", body["messages"][0]["content"][0])
+        timeout = urlopen.call_args.kwargs.get("timeout")
+        self.assertEqual(timeout, llm_api.GENERATION_TIMEOUT)
+
+    def test_generic_dialect_ignores_target_language(self):
+        response = FakeResponse({"choices": [{"message": {"content": "ok"}}]})
+        with mock.patch("urllib.request.urlopen",
+                        return_value=response) as urlopen:
+            llm_api.transcribe_audio(self.audio_path, "sk-test",
+                                     "https://example.com/v1", "gpt-audio",
+                                     dialect="openai", target_language="French")
+        body = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertNotIn("asr_options", body)
+        content = body["messages"][0]["content"]
+        self.assertEqual(len(content), 2)          # text prompt + input_audio
+        self.assertEqual(content[0]["type"], "text")
+        self.assertNotIn("French", content[0]["text"])
+        self.assertEqual(content[1]["input_audio"]["format"], "wav")
+
+
 class PostProcessTextTests(unittest.TestCase):
     def call(self, target_language="French", response=None, **kwargs):
         if response is None:

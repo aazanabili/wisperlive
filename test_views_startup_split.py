@@ -65,9 +65,11 @@ class SplitModuleSmokeTests(unittest.TestCase):
         # never the reverse (acyclic). row 7: settings_view + single_instance
         # extended into the no-main-import list.
         root_dir = os.path.dirname(os.path.abspath(__file__))
+        # row 7 + provider-presets: settings_view/single_instance joined, then
+        # the two pure registry/wire modules (acyclic: neither imports main).
         modules = (
             "themes", "startup", "views", "indicator", "tray", "app_logging",
-            "settings_view", "single_instance",
+            "settings_view", "single_instance", "providers", "llm_payloads",
         )
         for module in modules:
             path = os.path.join(root_dir, module + ".py")

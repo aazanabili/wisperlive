@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import sys
@@ -66,6 +67,118 @@ class ConfigManagerTests(unittest.TestCase):
     def test_defaults_include_empty_provider_settings(self):
         self.assertEqual(config_manager.DEFAULT_CONFIG["provider_base_url"], "")
         self.assertEqual(config_manager.DEFAULT_CONFIG["model"], "")
+
+    def test_defaults_include_preset_keys(self):
+        # T-2026-11-16-provider-presets: 3 additive keys (plan 2.1).
+        self.assertEqual(config_manager.DEFAULT_CONFIG["provider"], "custom")
+        self.assertEqual(config_manager.DEFAULT_CONFIG["provider_variant"], "")
+        self.assertEqual(config_manager.DEFAULT_CONFIG["transcription_model"], "")
+
+    def test_legacy_file_without_preset_keys_loads_byte_identical(self):
+        # M1: a pre-preset config (no provider keys at all) loads as Custom
+        # with every stored value byte-identical - no URL inference, no model
+        # rewrite, no new-key surprises beyond the 3 managed defaults.
+        target = config_manager.get_config_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        legacy = {
+            "api_key_protected": "base64:" + base64.b64encode(
+                b"legacy-secret").decode("ascii"),
+            "provider_base_url": "https://legacy.example/v1",
+            "model": "legacy-model",
+            "target_language": "Arabic",
+            "theme": "light",
+            "shortcut": "ctrl+alt+s",
+        }
+        target.write_text(json.dumps(legacy), encoding="utf-8")
+
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["provider"], "custom")
+        self.assertEqual(loaded["provider_base_url"], "https://legacy.example/v1")
+        self.assertEqual(loaded["model"], "legacy-model")
+        self.assertEqual(loaded["provider_variant"], "")
+        self.assertEqual(loaded["transcription_model"], "")
+        # M12: every pre-existing key round-trips untouched.
+        for key in ("target_language", "theme", "shortcut"):
+            self.assertEqual(loaded[key], legacy[key])
+        self.assertEqual(loaded["api_key"], "legacy-secret")
+
+    def test_load_normalizes_preset_provider_and_wins_over_stored_url(self):
+        # M5/M7 at the load path: a hand-edited file gets the registry variant
+        # default and the canonical registry URL (stored value discarded).
+        target = config_manager.get_config_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({
+            "provider": "deepseek",
+            "provider_variant": "bogus",
+            "provider_base_url": "https://stale.example/v1",
+            "model": "deepseek-chat",
+        }), encoding="utf-8")
+
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["provider"], "deepseek")
+        self.assertEqual(loaded["provider_variant"], "")
+        self.assertEqual(loaded["provider_base_url"], "https://api.deepseek.com")
+        self.assertEqual(loaded["model"], "deepseek-chat")
+
+    def test_load_fills_mimo_split_defaults_and_clears_single_strays(self):
+        target = config_manager.get_config_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # split preset with empty models -> curated defaults (M8/M9)
+        target.write_text(json.dumps({
+            "provider": "xiaomi-mimo",
+            "provider_variant": "token-plan-cn",
+            "provider_base_url": "",
+            "model": "",
+            "transcription_model": "",
+        }), encoding="utf-8")
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["provider_base_url"],
+                         "https://token-plan-cn.xiaomimimo.com/v1")
+        self.assertEqual(loaded["model"], "mimo-v2.6-flash")
+        self.assertEqual(loaded["transcription_model"], "mimo-v2.5-asr")
+
+        # single preset with a stray stage-1 value -> cleared (M11, R3 IFF)
+        target.write_text(json.dumps({
+            "provider": "groq",
+            "provider_base_url": "https://api.groq.com/openai/v1",
+            "model": "llama-3.3-70b-versatile",
+            "transcription_model": "mimo-v2.5-asr",
+        }), encoding="utf-8")
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["transcription_model"], "")
+        self.assertEqual(loaded["model"], "llama-3.3-70b-versatile")
+
+    def test_protected_api_key_survives_provider_normalization(self):
+        # DPAPI/base64 handling and the providers hook compose: the key is
+        # decrypted BEFORE normalization and never leaks into provider keys.
+        def fake_dpapi(protect, value):
+            wrapped = b"wrapped:"
+            raw = value.encode("utf-8") if isinstance(value, str) else value
+            return wrapped + raw if protect else raw[len(wrapped):]
+
+        with patch.object(config_manager, "_IS_WINDOWS", True), patch.object(
+            config_manager, "_windows_dpapi", side_effect=fake_dpapi
+        ):
+            config_manager.save_config({
+                "api_key": "dpapi-secret",
+                "provider": "xiaomi-mimo",
+                "provider_variant": "token-plan-ams",
+                "provider_base_url": "https://stale.example/v1",
+                "model": "",
+                "transcription_model": "",
+            })
+            raw = config_manager.get_config_path().read_text(encoding="utf-8")
+            self.assertIn('"api_key_protected": "dpapi:', raw)
+            self.assertNotIn("dpapi-secret", raw)
+            loaded = config_manager.load_config()
+
+        self.assertEqual(loaded["api_key"], "dpapi-secret")
+        self.assertEqual(loaded["provider"], "xiaomi-mimo")
+        self.assertEqual(loaded["provider_variant"], "token-plan-ams")
+        self.assertEqual(loaded["provider_base_url"],
+                         "https://token-plan-ams.xiaomimimo.com/v1")
+        self.assertEqual(loaded["model"], "mimo-v2.6-flash")
+        self.assertEqual(loaded["transcription_model"], "mimo-v2.5-asr")
 
     def test_windows_dpapi_roundtrip_format(self):
         def fake_dpapi(protect, value):
