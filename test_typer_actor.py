@@ -347,7 +347,18 @@ class UnicodeInjectionTests(unittest.TestCase):
         if auto_typer.os.name == "nt":
             self.assertIs(default_sender(clipboard), auto_typer.send_unicode_text)
         else:
-            self.assertIs(default_sender(clipboard), clipboard.put_and_paste)
+            # Bound methods are re-created on every attribute lookup before
+            # CPython 3.12 caches them (3.11 CI leg: assertIs fails on the
+            # transient wrapper). The contract is the SAME __func__ bound to
+            # the SAME __self__ -> assertEqual (method eq compares that pair),
+            # never object identity of the wrapper.
+            sender, expected = default_sender(clipboard), clipboard.put_and_paste
+            self.assertEqual(
+                (getattr(sender, "__func__", sender),
+                 getattr(sender, "__self__", None)),
+                (getattr(expected, "__func__", expected),
+                 getattr(expected, "__self__", None)),
+            )
 
 
 class SessionClipboardRestoreTests(unittest.TestCase):
