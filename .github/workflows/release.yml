@@ -235,15 +235,23 @@ jobs:
       with:
         path: .
         format: spdx
-        output-name: sbom.spdx
+        output-file: sbom.spdx
 
     - name: Scan SBOM (Trivy, fail on CRITICAL)
-      uses: aquasecurity/trivy-action@v0.36.0
-      with:
-        sbom-path: sbom.spdx
-        severity: 'CRITICAL'
-        exit-code: '1'
-        ignore-unfixed: 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Windows runners expose RUNNER_TEMP as a backslash+drive-letter path;
+        # bash PATH entries cannot contain a drive colon, so normalize to a POSIX
+        # path for both install and PATH lookup (Linux: cygpath absent -> no-op,
+        # identical to the verified Linux pipeline).
+        TRIVY_DIR="$RUNNER_TEMP/trivy-bin"
+        if command -v cygpath >/dev/null 2>&1; then TRIVY_DIR="$(cygpath -u "$TRIVY_DIR")"; fi
+        curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$TRIVY_DIR" v0.76.2
+        export PATH="$TRIVY_DIR:$PATH"
+        SBOM=$(ls ./*.spdx | head -n 1)
+        echo "Scanning SBOM file: $SBOM"
+        trivy sbom "$SBOM" --severity CRITICAL --ignore-unfixed --exit-code 1 --skip-version-check
 
     - name: Upload Artifact (For Manual Triggers)
       if: github.event_name == 'workflow_dispatch'
@@ -346,15 +354,23 @@ jobs:
       with:
         path: .
         format: spdx
-        output-name: sbom.spdx
+        output-file: sbom.spdx
 
     - name: Scan SBOM (Trivy, fail on CRITICAL)
-      uses: aquasecurity/trivy-action@v0.36.0
-      with:
-        sbom-path: sbom.spdx
-        severity: 'CRITICAL'
-        exit-code: '1'
-        ignore-unfixed: 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Windows runners expose RUNNER_TEMP as a backslash+drive-letter path;
+        # bash PATH entries cannot contain a drive colon, so normalize to a POSIX
+        # path for both install and PATH lookup (Linux: cygpath absent -> no-op,
+        # identical to the verified Linux pipeline).
+        TRIVY_DIR="$RUNNER_TEMP/trivy-bin"
+        if command -v cygpath >/dev/null 2>&1; then TRIVY_DIR="$(cygpath -u "$TRIVY_DIR")"; fi
+        curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$TRIVY_DIR" v0.76.2
+        export PATH="$TRIVY_DIR:$PATH"
+        SBOM=$(ls ./*.spdx | head -n 1)
+        echo "Scanning SBOM file: $SBOM"
+        trivy sbom "$SBOM" --severity CRITICAL --ignore-unfixed --exit-code 1 --skip-version-check
 
     - name: Stage package payload
       run: |
