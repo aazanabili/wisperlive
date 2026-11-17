@@ -1,8 +1,10 @@
 """LIVE cloud WS engine tests (plan 2.3; Phase 7 fake-transport contract).
 
-Owner: qa-test-assurance.  A fake websocket double replaces the transport
-(``websocket-client`` is absent in this dev venv — a premise this suite
-asserts), so NO network and NO real socket is ever used.
+Owner: qa-test-assurance.  A fake websocket double replaces the transport, so
+NO network and NO real socket is ever used.  The transport's PRESENCE is
+SIMULATED test-side (``websocket_absent()`` / ``websocket_present()``) and is
+never asserted from the host environment, so every test here passes
+identically whether or not ``websocket-client`` happens to be installed.
 
 Covers:
 * Gemini: URL + API-key header auth, setup frame shape, verbatim 16 kHz
@@ -17,11 +19,13 @@ Covers:
 """
 
 import base64
+import importlib.machinery
 import importlib.util
 import json
 import queue
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -516,37 +520,75 @@ class ConsentGateTests(unittest.TestCase):
         self.assertEqual(session.emissions, ())            # late events stay silent
 
 
+def websocket_absent():
+    """Transport-ABSENT simulation (env-agnostic).
+
+    ``sys.modules["websocket"] is None`` fails BOTH production seams no matter
+    what the host has installed: ``importlib.util.find_spec("websocket")``
+    returns ``None`` (the ``dictation_session`` preflight guard) and
+    ``import websocket`` raises (the ``live_cloud_engine._load_websocket``
+    lazy transport guard).
+    """
+    return mock.patch.dict("sys.modules", {"websocket": None})
+
+
+def websocket_present():
+    """Transport-PRESENT simulation (env-agnostic): a stub module carrying a
+    real ``__spec__`` satisfies ``find_spec`` AND ``import`` even on a host
+    without ``websocket-client`` — the exact mirror of :func:`websocket_absent`.
+    """
+    stub = types.ModuleType("websocket")
+    stub.__spec__ = importlib.machinery.ModuleSpec("websocket", loader=None)
+    return mock.patch.dict("sys.modules", {"websocket": stub})
+
+
 class TransportMissingTests(unittest.TestCase):
-    def test_premise_websocket_client_is_absent_here(self):
-        self.assertIsNone(importlib.util.find_spec("websocket"),
-                          "premise: this dev venv ships NO websocket-client")
+    """Transport-missing fail-closed (G6), exercised in BOTH host states.
+
+    The missing transport is SIMULATED, never observed: no assertion here
+    depends on whether ``websocket-client`` happens to be installed on the
+    machine running the suite (CI installs it; the dev venv does not).
+    """
+
+    def test_transport_simulation_drives_both_presence_states(self):
+        # Seam proof: the SAME test-side seams flip the production lookup BOTH
+        # ways, which is what makes the guard tests below environment-agnostic.
+        with websocket_absent():
+            self.assertIsNone(importlib.util.find_spec("websocket"))
+            with self.assertRaises(ImportError):
+                __import__("websocket")
+        with websocket_present():
+            self.assertIsNotNone(importlib.util.find_spec("websocket"))
+            self.assertIsNotNone(__import__("websocket"))
 
     def test_engine_fails_closed_before_any_socket_or_thread(self):
-        engine = LiveCloudEngine("openai-realtime")
-        try:
-            with self.assertRaises(EngineUnavailableError) as ctx:
-                engine.start(make_cfg(live_engine="openai-realtime",
-                                      api_keys={"openai": "k"}),
-                             lambda _e: None)
-            self.assertEqual(ctx.exception.reason,
-                             "websocket-client not installed")
-            self.assertIn("requirements.txt", str(ctx.exception))
-        finally:
-            engine.close()
-        self.assertIsNone(engine._thread)
-        self.assertIsNone(engine._ws)
+        with websocket_absent():                 # simulated: works with OR without the package
+            engine = LiveCloudEngine("openai-realtime")
+            try:
+                with self.assertRaises(EngineUnavailableError) as ctx:
+                    engine.start(make_cfg(live_engine="openai-realtime",
+                                          api_keys={"openai": "k"}),
+                                 lambda _e: None)
+                self.assertEqual(ctx.exception.reason,
+                                 "websocket-client not installed")
+                self.assertIn("requirements.txt", str(ctx.exception))
+            finally:
+                engine.close()
+            self.assertIsNone(engine._thread)
+            self.assertIsNone(engine._ws)
 
     def test_session_preflight_reports_transport_missing_before_recording(self):
         app = App(live_config(live_engine="openai-realtime"))
         config_manager.set_vendor_key(app.config, "openai", "k")
         session = DictationSession(app)
-        with self.assertRaises(EngineUnavailableError) as ctx:
-            session.preflight(app.config)
-        self.assertEqual(ctx.exception.reason,
-                         "websocket-client not installed")
-        self.assertTrue(session.maybe_start())             # never crashes (G6)
-        self.assertEqual(app.recorder.starts, 0)
-        self.assertEqual(session.state.value, "idle")
+        with websocket_absent():                 # simulated: never host-dependent
+            with self.assertRaises(EngineUnavailableError) as ctx:
+                session.preflight(app.config)
+            self.assertEqual(ctx.exception.reason,
+                             "websocket-client not installed")
+            self.assertTrue(session.maybe_start())       # never crashes (G6)
+            self.assertEqual(app.recorder.starts, 0)
+            self.assertEqual(session.state.value, "idle")
 
 
 if __name__ == "__main__":

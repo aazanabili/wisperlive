@@ -1,8 +1,10 @@
 """Local engine tests (plan 2.3): lazy-import guards, RTF hook, tier mapping.
 
-Owner: qa-test-assurance.  The dev venv has NO ML extras (faster_whisper /
-ctranslate2 absent), which this suite uses as the REAL environment for the D8
-guards, while fake backend/model-dir seams drive the rest deterministically.
+Owner: qa-test-assurance.  Every ML-extra dependency state is SIMULATED
+test-side (``sys.modules`` doubles), so the D8 guards are exercised on a host
+WITH and WITHOUT faster_whisper / ctranslate2 — nothing here observes or
+asserts what this machine happens to have installed, while fake
+backend/model-dir seams drive the rest deterministically.
 
 Covers: missing extras -> ``EngineUnavailableError`` (never ImportError out of
 the adapter), missing model -> ``ModelNotDownloadedError`` (D7: never fetch),
@@ -14,18 +16,13 @@ transcribe() contract (word_timestamps, independent units, generator consumed).
 import io
 import os
 import tempfile
+import types
 import unittest
 from unittest import mock
 
 import dictation_types as dt
 import local_engine
 from llm_errors import EngineUnavailableError, ModelNotDownloadedError
-
-try:
-    import faster_whisper                                   # noqa: F401
-    HAVE_EXTRAS = True
-except ImportError:
-    HAVE_EXTRAS = False
 
 
 def _config(**extra):
@@ -95,23 +92,31 @@ class LazyImportGuardTests(unittest.TestCase):
             self.assertNotIn(forbidden, top_level,
                              f"{forbidden} must never be a top-level import")
 
-    @unittest.skipIf(HAVE_EXTRAS, "extras installed: absence guard needs a clean venv")
     def test_missing_extras_raise_engine_unavailable_with_actionable_reason(self):
-        engine = local_engine.LocalEngine()
-        with self.assertRaises(EngineUnavailableError) as ctx:
-            engine.start(_config())
-        self.assertEqual(ctx.exception.engine_id, "local")
-        self.assertIn("requirements-ml", str(ctx.exception))
-        self.assertTrue(ctx.exception.reason)
+        # ENV-AGNOSTIC: extras SIMULATED absent — ``sys.modules[name] is None``
+        # makes `from faster_whisper import ...` raise on hosts with OR without
+        # the package installed.
+        with mock.patch.dict("sys.modules", {"faster_whisper": None}):
+            engine = local_engine.LocalEngine()
+            with self.assertRaises(EngineUnavailableError) as ctx:
+                engine.start(_config())
+            self.assertEqual(ctx.exception.engine_id, "local")
+            self.assertIn("requirements-ml", str(ctx.exception))
+            self.assertTrue(ctx.exception.reason)
         # process() before start() is a typed unavailability, never a crash
         with self.assertRaises(EngineUnavailableError):
             engine.process(_segment())
 
-    @unittest.skipUnless(HAVE_EXTRAS, "extras absent: environment gate (env-gated skip)")
     def test_start_reaches_the_missing_model_guard_when_extras_exist(self):
-        engine = local_engine.LocalEngine(store_dir=tempfile.mkdtemp())
-        with self.assertRaises(ModelNotDownloadedError):
-            engine.start(_config())
+        # ENV-AGNOSTIC: extras SIMULATED present (stub module whose
+        # WhisperModel is the fake double) so the missing-model guard is the
+        # failure on a host with OR without ML extras installed.
+        stub = types.ModuleType("faster_whisper")
+        stub.WhisperModel = FakeWhisperModel
+        with mock.patch.dict("sys.modules", {"faster_whisper": stub}):
+            engine = local_engine.LocalEngine(store_dir=tempfile.mkdtemp())
+            with self.assertRaises(ModelNotDownloadedError):
+                engine.start(_config())
 
 
 class MissingModelGuardTests(unittest.TestCase):
@@ -276,12 +281,12 @@ class TierMappingTests(unittest.TestCase):
                          local_engine.MODEL_IDS["standard"])     # auto may downgrade only
 
     def test_capability_probe_fails_conservatively_without_extras(self):
-        capable, reason = local_engine.capability_probe()
-        if HAVE_EXTRAS:
-            self.assertIsInstance(capable, bool)
-        else:
-            self.assertFalse(capable)                     # honest: not installed
-            self.assertIn("not installed", reason)
+        # ENV-AGNOSTIC: ctranslate2 SIMULATED absent (None in sys.modules), so
+        # the conservative fallback is asserted on hosts with OR without it.
+        with mock.patch.dict("sys.modules", {"ctranslate2": None}):
+            capable, reason = local_engine.capability_probe()
+        self.assertFalse(capable)
+        self.assertIn("not installed", reason)
 
     def test_probe_failure_never_crashes_startup(self):
         fake_ct2 = mock.Mock()
