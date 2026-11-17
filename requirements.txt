@@ -6,7 +6,9 @@ keyboard==0.13.5
 # Kept as an explicit pin (soundfile hard-depends on numpy for audio buffers),
 # so it must resolve deterministically for Python 3.11 CI and Python 3.14 local builds.
 numpy==2.4.6
-Pillow==11.3.0
+# SECURITY: 13.0.0 clears the 5 CRITICAL CVEs in 11.3.0 (JPEG/TIFF/FPX heap-overflow RCE-class + Ghostscript arg injection):
+# GHSA-8g5g-8vmr-9782, GHSA-5x8w-8jj5-q52h, GHSA-332p-7hrc-92wf, GHSA-v9pv-5gc8-w2m6, GHSA-w889-685w-c8fh (all fixed: 13.0.0).
+Pillow==13.0.0
 pyperclip==1.11.0
 pystray==0.19.5
 # pystray's X11 tray backend (pystray/_xorg.py) imports Xlib; pystray declares
